@@ -749,7 +749,6 @@ impl<'a> Verifier<'a> {
             | UnaryBool { .. }
             | Binary { .. }
             | BinaryImm { .. }
-            | Binary2Imm { .. }
             | Ternary { .. }
             | InsertLane { .. }
             | ExtractLane { .. }
