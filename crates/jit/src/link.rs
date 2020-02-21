@@ -97,14 +97,11 @@ pub fn link_module(
 // A declaration for the stack probe function in Rust's standard library, for
 // catching callstack overflow.
 cfg_if::cfg_if! {
-    if #[cfg(any(
-        target_arch="aarch64",
-        all(
+    if #[cfg(all(
             target_os = "windows",
             target_env = "msvc",
             target_pointer_width = "64"
-        )
-    ))] {
+            ))] {
         extern "C" {
             pub fn __chkstk();
         }
@@ -121,6 +118,8 @@ cfg_if::cfg_if! {
         extern "C" {
             pub fn __rust_probestack();
         }
-        static PROBESTACK: unsafe extern "C" fn() = __rust_probestack;
+        static PROBESTACK: unsafe extern "C" fn() = empty_probestack;
     }
 }
+
+extern "C" fn empty_probestack() {}
