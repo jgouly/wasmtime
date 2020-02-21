@@ -7,7 +7,8 @@ use cranelift_codegen::isa::TargetFrontendConfig;
 use cranelift_entity::PrimaryMap;
 use cranelift_wasm::{
     self, translate_module, DefinedFuncIndex, FuncIndex, Global, GlobalIndex, Memory, MemoryIndex,
-    ModuleTranslationState, SignatureIndex, Table, TableIndex, TargetEnvironment, WasmResult,
+    ModuleTranslationState, PassiveDataIndex, PassiveElemIndex, SignatureIndex, Table, TableIndex,
+    TargetEnvironment, WasmResult,
 };
 use std::convert::TryFrom;
 
@@ -367,6 +368,22 @@ impl<'data> cranelift_wasm::ModuleEnvironment<'data> for ModuleEnvironment<'data
             .module
             .func_names
             .insert(func_index, name.to_string());
+        Ok(())
+    }
+
+    fn declare_passive_element(
+        &mut self,
+        _index: PassiveElemIndex,
+        _elements: Box<[FuncIndex]>,
+    ) -> WasmResult<()> {
+        Ok(())
+    }
+
+    fn declare_passive_data(
+        &mut self,
+        _data_index: PassiveDataIndex,
+        _data: &'data [u8],
+    ) -> WasmResult<()> {
         Ok(())
     }
 }
