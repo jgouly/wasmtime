@@ -599,13 +599,14 @@ static struct sigaction sPrevSIGSEGVHandler;
 static struct sigaction sPrevSIGBUSHandler;
 static struct sigaction sPrevSIGILLHandler;
 static struct sigaction sPrevSIGFPEHandler;
+static struct sigaction sPrevSIGTRAPHandler;
 
 static void
 WasmTrapHandler(int signum, siginfo_t* info, void* context)
 {
     if (!sAlreadyHandlingTrap) {
         AutoHandlingTrap aht;
-        assert(signum == SIGSEGV || signum == SIGBUS || signum == SIGFPE || signum == SIGILL);
+        assert(signum == SIGSEGV || signum == SIGBUS || signum == SIGFPE || signum == SIGILL || signum == SIGTRAP);
 
         void *JmpBuf = HandleTrap(ContextToPC(static_cast<CONTEXT*>(context)), signum, info, context);
 
@@ -628,6 +629,7 @@ WasmTrapHandler(int signum, siginfo_t* info, void* context)
       case SIGBUS: previousSignal = &sPrevSIGBUSHandler; break;
       case SIGFPE: previousSignal = &sPrevSIGFPEHandler; break;
       case SIGILL: previousSignal = &sPrevSIGILLHandler; break;
+      case SIGTRAP: previousSignal = &sPrevSIGTRAPHandler; break;
     }
     assert(previousSignal);
 
@@ -749,7 +751,19 @@ EnsureEagerSignalHandlers()
     }
 # endif
 
-#endif
+# if defined(__aarch64__)
+    // AArch64 (ARM64) uses `brk #0` to implement traps, which send SIGTRAP.
+    struct sigaction trapHandler;
+    trapHandler.sa_flags = SA_SIGINFO | SA_NODEFER | SA_ONSTACK;
+    trapHandler.sa_sigaction = WasmTrapHandler;
+    sigemptyset(&trapHandler.sa_mask);
+    if (sigaction(SIGTRAP, &trapHandler, &sPrevSIGTRAPHandler)) {
+	perror("unable to install wasm SIGTRAP handler");
+	abort();
+    }
+# endif
+
+# endif
 
     return true;
 }

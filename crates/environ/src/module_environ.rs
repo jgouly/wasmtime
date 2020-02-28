@@ -412,6 +412,22 @@ impl<'data> cranelift_wasm::ModuleEnvironment<'data> for ModuleEnvironment<'data
             .insert(func_index, name.to_string());
         Ok(())
     }
+
+    fn declare_passive_element(
+        &mut self,
+        _index: PassiveElemIndex,
+        _elements: Box<[FuncIndex]>,
+    ) -> WasmResult<()> {
+        Ok(())
+    }
+
+    fn declare_passive_data(
+        &mut self,
+        _data_index: PassiveDataIndex,
+        _data: &'data [u8],
+    ) -> WasmResult<()> {
+        Ok(())
+    }
 }
 
 /// Add environment-specific function parameters.
