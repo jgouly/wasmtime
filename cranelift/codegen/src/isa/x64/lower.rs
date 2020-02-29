@@ -638,6 +638,8 @@ fn lower_insn_to_regs<'a>(ctx: Ctx<'a>, iri: IRInst) {
         | Opcode::X86Pminu => {
             panic!("x86-specific opcode in supposedly arch-neutral IR!");
         }
+
+        _ => panic!("Unsupported opcode!"),
     }
 
     if unimplemented {
