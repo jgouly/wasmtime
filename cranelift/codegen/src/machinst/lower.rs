@@ -16,7 +16,7 @@ use crate::machinst::{
 use crate::num_uses::NumUses;
 
 use regalloc::Function as RegallocFunction;
-use regalloc::{RealReg, Reg, RegClass, VirtualReg, Writable};
+use regalloc::{RealReg, Reg, RegClass, Set, VirtualReg, Writable};
 
 use alloc::boxed::Box;
 use alloc::vec::Vec;
@@ -399,28 +399,51 @@ impl<'a, I: VCodeInst> Lower<'a, I> {
                 .map(|p| self.f.dfg.value_type(*p))
                 .map(|ty| (ty, I::rc_for_type(ty)))
                 .collect();
-            let phi_temps: Vec<Writable<Reg>> = phi_classes
-                .into_iter()
-                .map(|(ty, rc)| self.tmp(rc, ty)) // borrows `self` mutably.
-                .collect();
 
-            debug!("phi_temps = {:?}", phi_temps);
+            // FIXME sewardj 2020Feb29: use SmallVec
+            let mut src_regs = Vec::<Reg>::new();
+            let mut dst_regs = Vec::<Writable<Reg>>::new();
 
             // Create all of the phi uses (reads) from jump args to temps.
+
+            // Round up all the source and destination regs
             for (i, arg) in self.f.dfg.inst_variable_args(inst).iter().enumerate() {
                 let arg = self.f.dfg.resolve_aliases(*arg);
                 debug!("jump arg {} is {}", i, arg);
-                let src_reg = self.value_regs[arg];
-                let dst_reg = phi_temps[i];
-                self.vcode.push(I::gen_move(dst_reg, src_reg));
+                src_regs.push(self.value_regs[arg]);
             }
-
-            // Create all of the phi defs (writes) from temps to block params.
             for (i, param) in self.f.dfg.block_params(orig_block).iter().enumerate() {
                 debug!("bb arg {} is {}", i, param);
-                let src_reg = phi_temps[i].to_reg();
-                let dst_reg = Writable::from_reg(self.value_regs[*param]);
-                self.vcode.push(I::gen_move(dst_reg, src_reg));
+                dst_regs.push(Writable::from_reg(self.value_regs[*param]));
+            }
+            debug_assert!(src_regs.len() == dst_regs.len());
+
+            // If, as is mostly the case, the source and destination register
+            // sets are non overlapping, then we can copy directly, so as to
+            // save the register allocator work.
+            if !Set::<Reg>::from_vec(src_regs.clone()).intersects(&Set::<Reg>::from_vec(
+                dst_regs.iter().map(|r| r.to_reg()).collect(),
+            )) {
+                for (dst_reg, src_reg) in dst_regs.iter().zip(src_regs) {
+                    self.vcode.push(I::gen_move(*dst_reg, src_reg));
+                }
+            } else {
+                // There's some overlap, so play safe and copy via temps.
+
+                let tmp_regs: Vec<Writable<Reg>> = phi_classes
+                    .into_iter()
+                    .map(|(ty, rc)| self.tmp(rc, ty)) // borrows `self` mutably.
+                    .collect();
+
+                debug!("phi_temps = {:?}", tmp_regs);
+                debug_assert!(tmp_regs.len() == src_regs.len());
+
+                for (tmp_reg, src_reg) in tmp_regs.iter().zip(src_regs) {
+                    self.vcode.push(I::gen_move(*tmp_reg, src_reg));
+                }
+                for (dst_reg, tmp_reg) in dst_regs.iter().zip(tmp_regs) {
+                    self.vcode.push(I::gen_move(*dst_reg, tmp_reg.to_reg()));
+                }
             }
 
             // Create the unconditional jump to the original target block.
