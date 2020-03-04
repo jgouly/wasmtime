@@ -73,13 +73,18 @@ pub fn mem_finalize<O: MachSectionOutput>(
     jt_offsets: &[CodeOffset],
 ) -> (Vec<Inst>, MemArg) {
     match mem {
-        &MemArg::StackOffset(fp_offset) => {
-            if let Some(simm9) = SImm9::maybe_from_i64(fp_offset) {
+        &MemArg::SPOffset(off) | &MemArg::FPOffset(off) => {
+            let basereg = match mem {
+                &MemArg::SPOffset(..) => stack_reg(),
+                &MemArg::FPOffset(..) => fp_reg(),
+                _ => unreachable!(),
+            };
+            if let Some(simm9) = SImm9::maybe_from_i64(off) {
                 let mem = MemArg::Unscaled(fp_reg(), simm9);
                 (vec![], mem)
             } else {
                 let tmp = writable_spilltmp_reg();
-                let const_data = u64_constant(fp_offset as u64);
+                let const_data = u64_constant(off as u64);
                 let (_, const_mem) = mem_finalize(
                     insn_off,
                     &MemArg::label(MemLabel::ConstantData(const_data)),
@@ -94,7 +99,7 @@ pub fn mem_finalize<O: MachSectionOutput>(
                     alu_op: ALUOp::Add64,
                     rd: tmp,
                     rn: tmp.to_reg(),
-                    rm: fp_reg(),
+                    rm: basereg,
                 };
                 (vec![const_inst, add_inst], MemArg::reg(tmp.to_reg()))
             }
@@ -586,7 +591,9 @@ impl<O: MachSectionOutput> MachInstEmit<O> for Inst {
                         sink.put4(enc_ldst_simm9(op, simm9, 0b01, reg.to_reg(), rd));
                     }
                     // Eliminated by `mem_finalize()` above.
-                    &MemArg::StackOffset(..) => panic!("Should not see StackOffset here!"),
+                    &MemArg::SPOffset(..) | &MemArg::FPOffset(..) => {
+                        panic!("Should not see stack-offset here!")
+                    }
                 }
             }
 
@@ -628,7 +635,9 @@ impl<O: MachSectionOutput> MachInstEmit<O> for Inst {
                         sink.put4(enc_ldst_simm9(op, simm9, 0b01, reg.to_reg(), rd));
                     }
                     // Eliminated by `mem_finalize()` above.
-                    &MemArg::StackOffset(..) => panic!("Should not see StackOffset here!"),
+                    &MemArg::SPOffset(..) | &MemArg::FPOffset(..) => {
+                        panic!("Should not see stack-offset here!")
+                    }
                 }
             }
             &Inst::StoreP64 { rt, rt2, ref mem } => match mem {
@@ -2073,7 +2082,7 @@ mod test {
         insns.push((
             Inst::ULoad64 {
                 rd: writable_xreg(1),
-                mem: MemArg::StackOffset(32768),
+                mem: MemArg::FPOffset(32768),
             },
             "8F000058EF011D8BE10140F9000000000080000000000000",
             "ldr x15, pc+0 ; add x15, x15, fp ; ldr x1, [x15]",

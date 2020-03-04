@@ -149,8 +149,9 @@ pub enum MemArg {
     RegScaled(Reg, Reg, Type, bool),
     Unscaled(Reg, SImm9),
     UnsignedOffset(Reg, UImm12Scaled),
-    /// Offset from the frame pointer.
-    StackOffset(i64),
+    /// Offset from the stack pointer or frame pointer.
+    SPOffset(i64),
+    FPOffset(i64),
 }
 
 impl MemArg {
@@ -453,7 +454,9 @@ impl ShowWithRRU for MemArg {
                 simm9.show_rru(mb_rru)
             ),
             // Eliminated by `mem_finalize()`.
-            &MemArg::StackOffset(..) => panic!("Unexpected StackOffset mem-arg mode!"),
+            &MemArg::SPOffset(..) | &MemArg::FPOffset(..) => {
+                panic!("Unexpected stack-offset mem-arg mode!")
+            }
         }
     }
 }

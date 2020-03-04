@@ -117,6 +117,12 @@ pub trait ABICall<I: VCodeInst> {
     /// Copy a return value into a destination register, after the call returns.
     fn gen_copy_retval_to_reg(&self, idx: usize, into_reg: Writable<Reg>) -> I;
 
+    /// Pre-adjust the stack, prior to argument copies and call.
+    fn gen_stack_pre_adjust(&self) -> Vec<I>;
+
+    /// Post-adjust the satck, after call return and return-value copies.
+    fn gen_stack_post_adjust(&self) -> Vec<I>;
+
     /// Generate the call itself.
     ///
     /// The returned instruction should have proper use- and def-sets according
@@ -127,5 +133,5 @@ pub trait ABICall<I: VCodeInst> {
     /// registers are also logically defs, but should never be read; their
     /// values are "defined" (to the regalloc) but "undefined" in every other
     /// sense.)
-    fn gen_call(&self) -> I;
+    fn gen_call(&self) -> Vec<I>;
 }

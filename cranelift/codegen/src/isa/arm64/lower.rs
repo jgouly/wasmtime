@@ -1572,14 +1572,22 @@ fn lower_insn_to_regs<C: LowerCtx<Inst>>(ctx: &mut C, insn: IRInst) {
                 }
                 _ => unreachable!(),
             };
+            for inst in abi.gen_stack_pre_adjust().into_iter() {
+                ctx.emit(inst);
+            }
             for (i, input) in inputs.iter().enumerate() {
                 let arg_reg = input_to_reg(ctx, *input, NarrowValueMode::None);
                 ctx.emit(abi.gen_copy_reg_to_arg(i, arg_reg));
             }
-            ctx.emit(abi.gen_call());
+            for inst in abi.gen_call().into_iter() {
+                ctx.emit(inst);
+            }
             for (i, output) in outputs.iter().enumerate() {
                 let retval_reg = output_to_reg(ctx, *output);
                 ctx.emit(abi.gen_copy_retval_to_reg(i, retval_reg));
+            }
+            for inst in abi.gen_stack_post_adjust().into_iter() {
+                ctx.emit(inst);
             }
         }
 

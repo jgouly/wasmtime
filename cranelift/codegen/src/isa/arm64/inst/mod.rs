@@ -401,8 +401,11 @@ fn memarg_regs(memarg: &MemArg, used: &mut Set<Reg>, modified: &mut Set<Writable
         &MemArg::PreIndexed(reg, ..) | &MemArg::PostIndexed(reg, ..) => {
             modified.insert(reg);
         }
-        &MemArg::StackOffset(..) => {
+        &MemArg::FPOffset(..) => {
             used.insert(fp_reg());
+        }
+        &MemArg::SPOffset(..) => {
+            used.insert(stack_reg());
         }
     }
 }
@@ -618,7 +621,8 @@ fn arm64_map_regs(
             &MemArg::Label(ref l) => MemArg::Label(l.clone()),
             &MemArg::PreIndexed(r, simm9) => MemArg::PreIndexed(map_wr(u, r), simm9),
             &MemArg::PostIndexed(r, simm9) => MemArg::PostIndexed(map_wr(u, r), simm9),
-            &MemArg::StackOffset(off) => MemArg::StackOffset(off),
+            &MemArg::FPOffset(off) => MemArg::FPOffset(off),
+            &MemArg::SPOffset(off) => MemArg::SPOffset(off),
         }
     }
 
