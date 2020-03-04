@@ -450,6 +450,18 @@ impl<O: MachSectionOutput> MachInstEmit<O> for Inst {
                     ALUOp::Sub64 => 0b110_01011000,
                     ALUOp::SubS32 => 0b011_01011000,
                     ALUOp::SubS64 => 0b111_01011000,
+                    ALUOp::Orr32 => 0b001_01010000,
+                    ALUOp::Orr64 => 0b101_01010000,
+                    ALUOp::And32 => 0b000_01010000,
+                    ALUOp::And64 => 0b100_01010000,
+                    ALUOp::Eor32 => 0b010_01010000,
+                    ALUOp::Eor64 => 0b110_01010000,
+                    ALUOp::OrrNot32 => 0b001_01010001,
+                    ALUOp::OrrNot64 => 0b101_01010001,
+                    ALUOp::EorNot32 => 0b010_01010001,
+                    ALUOp::EorNot64 => 0b110_01010001,
+                    ALUOp::AndNot32 => 0b000_01010001,
+                    ALUOp::AndNot64 => 0b100_01010001,
                     _ => unimplemented!("{:?}", alu_op),
                 };
                 let top11 = top11 | ((shiftop.op().bits() as u16) << 1);
@@ -1333,6 +1345,20 @@ mod test {
 
         insns.push((
             Inst::AluRRRShift {
+                alu_op: ALUOp::Add32,
+                rd: writable_xreg(10),
+                rn: xreg(11),
+                rm: xreg(12),
+                shiftop: ShiftOpAndAmt::new(
+                    ShiftOp::LSL,
+                    ShiftOpShiftImm::maybe_from_shift(20).unwrap(),
+                ),
+            },
+            "6A510C0B",
+            "add w10, w11, w12, LSL 20",
+        ));
+        insns.push((
+            Inst::AluRRRShift {
                 alu_op: ALUOp::Add64,
                 rd: writable_xreg(10),
                 rn: xreg(11),
@@ -1358,6 +1384,244 @@ mod test {
             },
             "6A5D0C4B",
             "sub w10, w11, w12, LSL 23",
+        ));
+        insns.push((
+            Inst::AluRRRShift {
+                alu_op: ALUOp::Sub64,
+                rd: writable_xreg(10),
+                rn: xreg(11),
+                rm: xreg(12),
+                shiftop: ShiftOpAndAmt::new(
+                    ShiftOp::LSL,
+                    ShiftOpShiftImm::maybe_from_shift(23).unwrap(),
+                ),
+            },
+            "6A5D0CCB",
+            "sub x10, x11, x12, LSL 23",
+        ));
+        insns.push((
+            Inst::AluRRRShift {
+                alu_op: ALUOp::Orr32,
+                rd: writable_xreg(10),
+                rn: xreg(11),
+                rm: xreg(12),
+                shiftop: ShiftOpAndAmt::new(
+                    ShiftOp::LSL,
+                    ShiftOpShiftImm::maybe_from_shift(23).unwrap(),
+                ),
+            },
+            "6A5D0C2A",
+            "orr w10, w11, w12, LSL 23",
+        ));
+        insns.push((
+            Inst::AluRRRShift {
+                alu_op: ALUOp::Orr64,
+                rd: writable_xreg(10),
+                rn: xreg(11),
+                rm: xreg(12),
+                shiftop: ShiftOpAndAmt::new(
+                    ShiftOp::LSL,
+                    ShiftOpShiftImm::maybe_from_shift(23).unwrap(),
+                ),
+            },
+            "6A5D0CAA",
+            "orr x10, x11, x12, LSL 23",
+        ));
+        insns.push((
+            Inst::AluRRRShift {
+                alu_op: ALUOp::And32,
+                rd: writable_xreg(10),
+                rn: xreg(11),
+                rm: xreg(12),
+                shiftop: ShiftOpAndAmt::new(
+                    ShiftOp::LSL,
+                    ShiftOpShiftImm::maybe_from_shift(23).unwrap(),
+                ),
+            },
+            "6A5D0C0A",
+            "and w10, w11, w12, LSL 23",
+        ));
+        insns.push((
+            Inst::AluRRRShift {
+                alu_op: ALUOp::And64,
+                rd: writable_xreg(10),
+                rn: xreg(11),
+                rm: xreg(12),
+                shiftop: ShiftOpAndAmt::new(
+                    ShiftOp::LSL,
+                    ShiftOpShiftImm::maybe_from_shift(23).unwrap(),
+                ),
+            },
+            "6A5D0C8A",
+            "and x10, x11, x12, LSL 23",
+        ));
+        insns.push((
+            Inst::AluRRRShift {
+                alu_op: ALUOp::Eor32,
+                rd: writable_xreg(10),
+                rn: xreg(11),
+                rm: xreg(12),
+                shiftop: ShiftOpAndAmt::new(
+                    ShiftOp::LSL,
+                    ShiftOpShiftImm::maybe_from_shift(23).unwrap(),
+                ),
+            },
+            "6A5D0C4A",
+            "eor w10, w11, w12, LSL 23",
+        ));
+        insns.push((
+            Inst::AluRRRShift {
+                alu_op: ALUOp::Eor64,
+                rd: writable_xreg(10),
+                rn: xreg(11),
+                rm: xreg(12),
+                shiftop: ShiftOpAndAmt::new(
+                    ShiftOp::LSL,
+                    ShiftOpShiftImm::maybe_from_shift(23).unwrap(),
+                ),
+            },
+            "6A5D0CCA",
+            "eor x10, x11, x12, LSL 23",
+        ));
+        insns.push((
+            Inst::AluRRRShift {
+                alu_op: ALUOp::OrrNot32,
+                rd: writable_xreg(10),
+                rn: xreg(11),
+                rm: xreg(12),
+                shiftop: ShiftOpAndAmt::new(
+                    ShiftOp::LSL,
+                    ShiftOpShiftImm::maybe_from_shift(23).unwrap(),
+                ),
+            },
+            "6A5D2C2A",
+            "orn w10, w11, w12, LSL 23",
+        ));
+        insns.push((
+            Inst::AluRRRShift {
+                alu_op: ALUOp::OrrNot64,
+                rd: writable_xreg(10),
+                rn: xreg(11),
+                rm: xreg(12),
+                shiftop: ShiftOpAndAmt::new(
+                    ShiftOp::LSL,
+                    ShiftOpShiftImm::maybe_from_shift(23).unwrap(),
+                ),
+            },
+            "6A5D2CAA",
+            "orn x10, x11, x12, LSL 23",
+        ));
+        insns.push((
+            Inst::AluRRRShift {
+                alu_op: ALUOp::AndNot32,
+                rd: writable_xreg(10),
+                rn: xreg(11),
+                rm: xreg(12),
+                shiftop: ShiftOpAndAmt::new(
+                    ShiftOp::LSL,
+                    ShiftOpShiftImm::maybe_from_shift(23).unwrap(),
+                ),
+            },
+            "6A5D2C0A",
+            "bic w10, w11, w12, LSL 23",
+        ));
+        insns.push((
+            Inst::AluRRRShift {
+                alu_op: ALUOp::AndNot64,
+                rd: writable_xreg(10),
+                rn: xreg(11),
+                rm: xreg(12),
+                shiftop: ShiftOpAndAmt::new(
+                    ShiftOp::LSL,
+                    ShiftOpShiftImm::maybe_from_shift(23).unwrap(),
+                ),
+            },
+            "6A5D2C8A",
+            "bic x10, x11, x12, LSL 23",
+        ));
+        insns.push((
+            Inst::AluRRRShift {
+                alu_op: ALUOp::EorNot32,
+                rd: writable_xreg(10),
+                rn: xreg(11),
+                rm: xreg(12),
+                shiftop: ShiftOpAndAmt::new(
+                    ShiftOp::LSL,
+                    ShiftOpShiftImm::maybe_from_shift(23).unwrap(),
+                ),
+            },
+            "6A5D2C4A",
+            "eon w10, w11, w12, LSL 23",
+        ));
+        insns.push((
+            Inst::AluRRRShift {
+                alu_op: ALUOp::EorNot64,
+                rd: writable_xreg(10),
+                rn: xreg(11),
+                rm: xreg(12),
+                shiftop: ShiftOpAndAmt::new(
+                    ShiftOp::LSL,
+                    ShiftOpShiftImm::maybe_from_shift(23).unwrap(),
+                ),
+            },
+            "6A5D2CCA",
+            "eon x10, x11, x12, LSL 23",
+        ));
+        insns.push((
+            Inst::AluRRRShift {
+                alu_op: ALUOp::AddS32,
+                rd: writable_xreg(10),
+                rn: xreg(11),
+                rm: xreg(12),
+                shiftop: ShiftOpAndAmt::new(
+                    ShiftOp::LSL,
+                    ShiftOpShiftImm::maybe_from_shift(23).unwrap(),
+                ),
+            },
+            "6A5D0C2B",
+            "adds w10, w11, w12, LSL 23",
+        ));
+        insns.push((
+            Inst::AluRRRShift {
+                alu_op: ALUOp::AddS64,
+                rd: writable_xreg(10),
+                rn: xreg(11),
+                rm: xreg(12),
+                shiftop: ShiftOpAndAmt::new(
+                    ShiftOp::LSL,
+                    ShiftOpShiftImm::maybe_from_shift(23).unwrap(),
+                ),
+            },
+            "6A5D0CAB",
+            "adds x10, x11, x12, LSL 23",
+        ));
+        insns.push((
+            Inst::AluRRRShift {
+                alu_op: ALUOp::SubS32,
+                rd: writable_xreg(10),
+                rn: xreg(11),
+                rm: xreg(12),
+                shiftop: ShiftOpAndAmt::new(
+                    ShiftOp::LSL,
+                    ShiftOpShiftImm::maybe_from_shift(23).unwrap(),
+                ),
+            },
+            "6A5D0C6B",
+            "subs w10, w11, w12, LSL 23",
+        ));
+        insns.push((
+            Inst::AluRRRShift {
+                alu_op: ALUOp::SubS64,
+                rd: writable_xreg(10),
+                rn: xreg(11),
+                rm: xreg(12),
+                shiftop: ShiftOpAndAmt::new(
+                    ShiftOp::LSL,
+                    ShiftOpShiftImm::maybe_from_shift(23).unwrap(),
+                ),
+            },
+            "6A5D0CEB",
+            "subs x10, x11, x12, LSL 23",
         ));
 
         insns.push((
