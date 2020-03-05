@@ -108,16 +108,6 @@ jobs:
             | shuf \
             | head -n 100 \
             | xargs cargo fuzz run differential --release --debug-assertions
-    - run: |
-        find fuzz/corpus/reader_parse_test -type f \
-            | shuf \
-            | head -n 100 \
-            | xargs cargo fuzz run reader_parse_test --release --debug-assertions
-    - run: |
-        find fuzz/corpus/translate_module -type f \
-            | shuf \
-            | head -n 100 \
-            | xargs cargo fuzz run translate_module --release --debug-assertions
 
   # Install wasm32-unknown-emscripten target, and ensure `crates/wasi-common`
   # compiles to Emscripten.
@@ -196,6 +186,12 @@ jobs:
 
     # Build and test all features except for lightbeam
     - run: cargo test --features test_programs --all --exclude lightbeam --exclude wasmtime-c-api -- --nocapture
+      env:
+        RUST_BACKTRACE: 1
+        RUSTFLAGS: "-D warnings"
+
+    # Test debug (DWARF) related functionality.
+    - run: cargo test test_debug_dwarf_ -- --ignored --nocapture --test-threads 1
       env:
         RUST_BACKTRACE: 1
         RUSTFLAGS: "-D warnings"
@@ -356,7 +352,7 @@ jobs:
     - run: $CENTOS cargo build --release --manifest-path crates/c-api/Cargo.toml
       shell: bash
     # Test what we just built
-    - run: $CENTOS cargo test --features test_programs --release --all --exclude lightbeam --exclude wasmtime --exclude wasmtime-c-api --exclude wasmtime-fuzzing -- --skip test_debug_dwarf_
+    - run: $CENTOS cargo test --features test_programs --release --all --exclude lightbeam --exclude wasmtime --exclude wasmtime-c-api --exclude wasmtime-fuzzing
       shell: bash
       env:
         RUST_BACKTRACE: 1

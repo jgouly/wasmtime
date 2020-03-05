@@ -558,7 +558,7 @@ impl<'a> Parser<'a> {
         err!(self.loc, "expected jump table number: jt«n»")
     }
 
-    // Match and consume an block reference.
+    // Match and consume a block reference.
     fn match_block(&mut self, err_msg: &str) -> ParseResult<Block> {
         if let Some(Token::Block(block)) = self.token() {
             self.consume();
@@ -687,10 +687,35 @@ impl<'a> Parser<'a> {
     fn match_imm16(&mut self, err_msg: &str) -> ParseResult<i16> {
         if let Some(Token::Integer(text)) = self.token() {
             self.consume();
+            let negative = text.starts_with('-');
+            let positive = text.starts_with('+');
+            let text = if negative || positive {
+                // Strip sign prefix.
+                &text[1..]
+            } else {
+                text
+            };
+            let mut value;
             // Lexer just gives us raw text that looks like an integer.
-            // Parse it as a i16 to check for overflow and other issues.
-            text.parse()
-                .map_err(|_| self.error("expected i16 decimal immediate"))
+            if text.starts_with("0x") {
+                // Skip underscores.
+                let text = text.replace("_", "");
+                // Parse it as a i16 in hexadecimal form.
+                value = u16::from_str_radix(&text[2..], 16)
+                    .map_err(|_| self.error("unable to parse i16 as a hexadecimal immediate"))?;
+            } else {
+                // Parse it as a i16 to check for overflow and other issues.
+                value = text
+                    .parse()
+                    .map_err(|_| self.error("expected i16 decimal immediate"))?;
+            }
+            if negative {
+                value = Ok(value.wrapping_neg())?;
+                if value as i16 > 0 {
+                    return Err(self.error("negative number too small"));
+                }
+            }
+            Ok(value as i16)
         } else {
             err!(self.loc, err_msg)
         }
@@ -701,10 +726,35 @@ impl<'a> Parser<'a> {
     fn match_imm32(&mut self, err_msg: &str) -> ParseResult<i32> {
         if let Some(Token::Integer(text)) = self.token() {
             self.consume();
+            let negative = text.starts_with('-');
+            let positive = text.starts_with('+');
+            let text = if negative || positive {
+                // Strip sign prefix.
+                &text[1..]
+            } else {
+                text
+            };
+            let mut value;
             // Lexer just gives us raw text that looks like an integer.
-            // Parse it as a i32 to check for overflow and other issues.
-            text.parse()
-                .map_err(|_| self.error("expected i32 decimal immediate"))
+            if text.starts_with("0x") {
+                // Skip underscores.
+                let text = text.replace("_", "");
+                // Parse it as a i32 in hexadecimal form.
+                value = u32::from_str_radix(&text[2..], 16)
+                    .map_err(|_| self.error("unable to parse i32 as a hexadecimal immediate"))?;
+            } else {
+                // Parse it as a i32 to check for overflow and other issues.
+                value = text
+                    .parse()
+                    .map_err(|_| self.error("expected i32 decimal immediate"))?;
+            }
+            if negative {
+                value = Ok(value.wrapping_neg())?;
+                if value as i32 > 0 {
+                    return Err(self.error("negative number too small"));
+                }
+            }
+            Ok(value as i32)
         } else {
             err!(self.loc, err_msg)
         }
@@ -3314,6 +3364,78 @@ mod tests {
     }
 
     #[test]
+    fn i16_as_hex() {
+        fn parse_as_imm16(text: &str) -> ParseResult<i16> {
+            Parser::new(text).match_imm16("unable to parse i16")
+        }
+
+        assert_eq!(parse_as_imm16("0x8000").unwrap(), -32768);
+        assert_eq!(parse_as_imm16("0xffff").unwrap(), -1);
+        assert_eq!(parse_as_imm16("0").unwrap(), 0);
+        assert_eq!(parse_as_imm16("0x7fff").unwrap(), 32767);
+        assert_eq!(
+            parse_as_imm16("-0x0001").unwrap(),
+            parse_as_imm16("0xffff").unwrap()
+        );
+        assert_eq!(
+            parse_as_imm16("-0x7fff").unwrap(),
+            parse_as_imm16("0x8001").unwrap()
+        );
+        assert!(parse_as_imm16("0xffffa").is_err());
+    }
+
+    #[test]
+    fn i32_as_hex() {
+        fn parse_as_imm32(text: &str) -> ParseResult<i32> {
+            Parser::new(text).match_imm32("unable to parse i32")
+        }
+
+        assert_eq!(parse_as_imm32("0x80000000").unwrap(), -2147483648);
+        assert_eq!(parse_as_imm32("0xffffffff").unwrap(), -1);
+        assert_eq!(parse_as_imm32("0").unwrap(), 0);
+        assert_eq!(parse_as_imm32("0x7fffffff").unwrap(), 2147483647);
+        assert_eq!(
+            parse_as_imm32("-0x00000001").unwrap(),
+            parse_as_imm32("0xffffffff").unwrap()
+        );
+        assert_eq!(
+            parse_as_imm32("-0x7fffffff").unwrap(),
+            parse_as_imm32("0x80000001").unwrap()
+        );
+        assert!(parse_as_imm32("0xffffffffa").is_err());
+    }
+
+    #[test]
+    fn i64_as_hex() {
+        fn parse_as_imm64(text: &str) -> ParseResult<Imm64> {
+            Parser::new(text).match_imm64("unable to parse Imm64")
+        }
+
+        assert_eq!(
+            parse_as_imm64("0x8000000000000000").unwrap(),
+            Imm64::new(-9223372036854775808)
+        );
+        assert_eq!(
+            parse_as_imm64("0xffffffffffffffff").unwrap(),
+            Imm64::new(-1)
+        );
+        assert_eq!(parse_as_imm64("0").unwrap(), Imm64::new(0));
+        assert_eq!(
+            parse_as_imm64("0x7fffffffffffffff").unwrap(),
+            Imm64::new(9223372036854775807)
+        );
+        assert_eq!(
+            parse_as_imm64("-0x0000000000000001").unwrap(),
+            parse_as_imm64("0xffffffffffffffff").unwrap()
+        );
+        assert_eq!(
+            parse_as_imm64("-0x7fffffffffffffff").unwrap(),
+            parse_as_imm64("0x8000000000000001").unwrap()
+        );
+        assert!(parse_as_imm64("0xffffffffffffffffa").is_err());
+    }
+
+    #[test]
     fn uimm128() {
         macro_rules! parse_as_constant_data {
             ($text:expr, $type:expr) => {{
@@ -3334,12 +3456,12 @@ mod tests {
         can_parse_as_constant_data!("1 2 3 4", I32X4);
         can_parse_as_constant_data!("1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16", I8X16);
         can_parse_as_constant_data!("0x1.1 0x2.2 0x3.3 0x4.4", F32X4);
+        can_parse_as_constant_data!("0x0 0x1 0x2 0x3", I32X4);
         can_parse_as_constant_data!("true false true false true false true false", B16X8);
         can_parse_as_constant_data!("0 -1", I64X2);
         can_parse_as_constant_data!("true false", B64X2);
         can_parse_as_constant_data!("true true true true true", B32X4); // note that parse_literals_to_constant_data will leave extra tokens unconsumed
 
-        cannot_parse_as_constant_data!("0x0 0x1 0x2 0x3", I32X4);
         cannot_parse_as_constant_data!("1 2 3", I32X4);
         cannot_parse_as_constant_data!(" ", F32X4);
     }
