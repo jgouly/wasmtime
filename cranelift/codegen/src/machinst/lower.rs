@@ -421,7 +421,7 @@ impl<'a, I: VCodeInst> Lower<'a, I> {
             // If, as is mostly the case, the source and destination register
             // sets are non overlapping, then we can copy directly, so as to
             // save the register allocator work.
-            if false && !Set::<Reg>::from_vec(src_regs.clone()).intersects(&Set::<Reg>::from_vec(
+            if !Set::<Reg>::from_vec(src_regs.clone()).intersects(&Set::<Reg>::from_vec(
                 dst_regs.iter().map(|r| r.to_reg()).collect(),
             )) {
                 for (dst_reg, src_reg) in dst_regs.iter().zip(src_regs) {

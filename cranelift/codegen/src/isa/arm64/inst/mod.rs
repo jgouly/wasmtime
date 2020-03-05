@@ -922,8 +922,11 @@ impl MachInst for Inst {
     }
 
     fn is_move(&self) -> Option<(Writable<Reg>, Reg)> {
+        // TEMPORARY FIX, 2020-03-05: regalloc seems to give
+        // a buggy result when we enable move-coalescing. So
+        // for now, all inserted moves remain explicit.
         match self {
-            &Inst::Mov { rd, rm } => Some((rd, rm)),
+            //    &Inst::Mov { rd, rm } => Some((rd, rm)),
             _ => None,
         }
     }
