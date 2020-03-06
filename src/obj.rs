@@ -25,7 +25,7 @@ pub fn compile_to_obj(
     cache_config: &CacheConfig,
 ) -> Result<Artifact> {
     let isa_builder = match target {
-        Some(target) => native::lookup(target.clone())?.as_builder(),
+        Some(target) => native::lookup(target.clone())?,
         None => native::builder(),
     };
     let mut flag_builder = settings::builder();

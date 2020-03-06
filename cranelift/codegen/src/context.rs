@@ -148,9 +148,13 @@ impl Context {
     pub fn compile(&mut self, isa: &dyn TargetIsa) -> CodegenResult<CodeInfo> {
         let _tt = timing::compile();
         self.verify_if(isa)?;
-        debug!("Compiling:\n{}", self.func.display(isa));
 
         let opt_level = isa.flags().opt_level();
+        debug!(
+            "Compiling (opt level {:?}):\n{}",
+            opt_level,
+            self.func.display(isa)
+        );
 
         self.compute_cfg();
         if opt_level != OptLevel::None {

@@ -1,6 +1,7 @@
 use crate::subtest::{run_filecheck, Context, SubTest, SubtestResult};
 use cranelift_codegen::ir::Function;
 use cranelift_codegen::isa::lookup;
+use cranelift_codegen::settings;
 use cranelift_codegen::Context as CodegenContext;
 use cranelift_reader::{TestCommand, TestOption};
 use target_lexicon::Triple;
@@ -51,8 +52,7 @@ impl SubTest for TestVCode {
 
         let mut isa = lookup(triple)
             .map_err(|_| format!("Could not look up backend for arch '{}'", self.arch))?
-            .as_builder()
-            .get_wrapped();
+            .finish(settings::Flags::new(settings::builder()));
 
         let mut codectx = CodegenContext::for_function(func);
         codectx.set_disasm(true);

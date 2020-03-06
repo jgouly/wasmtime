@@ -32,9 +32,8 @@ struct Isa {
 pub fn isa_builder(triple: Triple) -> IsaBuilder {
     IsaBuilder {
         triple,
-        setup: Some(settings::builder()),
-        constructor: Some(isa_constructor),
-        wrapped: None,
+        setup: settings::builder(),
+        constructor: isa_constructor,
     }
 }
 
@@ -156,7 +155,6 @@ mod tests {
         let shared_flags = settings::Flags::new(shared_builder);
         let isa = isa::lookup(triple!("riscv64"))
             .unwrap()
-            .as_builder()
             .finish(shared_flags);
 
         let mut func = Function::new();
@@ -208,7 +206,6 @@ mod tests {
         let shared_flags = settings::Flags::new(shared_builder);
         let isa = isa::lookup(triple!("riscv32"))
             .unwrap()
-            .as_builder()
             .finish(shared_flags);
 
         let mut func = Function::new();
@@ -265,7 +262,7 @@ mod tests {
 
         // Set the supports_m stting which in turn enables the use_m predicate that unlocks
         // encodings for imul.
-        let mut isa_builder = isa::lookup(triple!("riscv32")).unwrap().as_builder();
+        let mut isa_builder = isa::lookup(triple!("riscv32")).unwrap();
         isa_builder.enable("supports_m").unwrap();
 
         let isa = isa_builder.finish(shared_flags);

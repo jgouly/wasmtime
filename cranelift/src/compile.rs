@@ -2,7 +2,6 @@
 
 use crate::disasm::{print_all, PrintRelocs, PrintStackmaps, PrintTraps};
 use crate::utils::{parse_sets_and_triple, read_to_string};
-use cranelift_codegen::binemit::{MemoryCodeSink, NullRelocSink, NullStackmapSink, NullTrapSink};
 use cranelift_codegen::print_errors::pretty_error;
 use cranelift_codegen::settings::FlagsOrIsa;
 use cranelift_codegen::timing;
@@ -51,9 +50,8 @@ fn handle_module(
     // If we have an isa from the command-line, use that. Otherwise if the
     // file contains a unique isa, use that.
     let isa = fisa.isa.or(test_file.isa_spec.unique_isa());
-    let backend = fisa.backend;
 
-    if isa.is_none() && backend.is_none() {
+    if isa.is_none() {
         return Err(String::from("compilation requires a target isa"));
     };
 
@@ -86,32 +84,6 @@ fn handle_module(
                     &traps,
                     &stackmaps,
                 )?;
-            }
-        } else if let Some(backend) = backend {
-            let result = backend
-                .compile_function(func, /* want_disasm = */ flag_disasm)
-                .expect("Compilation error");
-
-            if flag_disasm {
-                println!("{}", result.disasm.unwrap());
-            }
-
-            if flag_print {
-                let mut buf: Vec<u8> = vec![0; result.sections.total_size() as usize];
-                let mut relocs = NullRelocSink {};
-                let mut traps = NullTrapSink {};
-                let mut stackmaps = NullStackmapSink {};
-                let mut sink = unsafe {
-                    MemoryCodeSink::new(buf.as_mut_ptr(), &mut relocs, &mut traps, &mut stackmaps)
-                };
-                result.sections.emit(&mut sink);
-                println!("Machine code:");
-                for word in buf.chunks(4) {
-                    println!(
-                        "{:02x}{:02x}{:02x}{:02x}",
-                        word[3], word[2], word[1], word[0]
-                    );
-                }
             }
         }
     }

@@ -2,6 +2,10 @@ TODO:
 
 - MVP:
 
+  - Ensure correctness: build a step-by-step checker
+    - Against a WASM interpreter, using the heap and validating stores?
+      - in cranelift-wasm, emit calls to a checker runtime.
+
   - Bringup with SpiderMonkey/arm64
     - Baldrdash calling convention: no prologue/epilogue
 

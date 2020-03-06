@@ -1,10 +1,15 @@
 //! X86_64-bit Instruction Set Architecture.
 
 #![allow(unused_imports)]
+#![allow(dead_code)]
 
 use crate::binemit::{CodeSink, MemoryCodeSink, RelocSink, StackmapSink, TrapSink};
 use crate::ir::Function;
-use crate::machinst::{compile, MachBackend, MachCompileResult, ShowWithRRU, VCode};
+use crate::isa::Builder as IsaBuilder;
+use crate::isa::TargetIsa;
+use crate::machinst::{
+    compile, MachBackend, MachCompileResult, ShowWithRRU, TargetIsaAdapter, VCode,
+};
 use crate::result::CodegenResult;
 use crate::settings;
 
@@ -34,6 +39,11 @@ impl X64Backend {
         X64Backend {
             flags: settings::Flags::new(settings::builder()),
         }
+    }
+
+    /// Create a new X64 backend with the given (shared) flags.
+    pub fn new_with_flags(flags: settings::Flags) -> X64Backend {
+        X64Backend { flags }
     }
 
     fn compile_vcode(&self, mut func: Function) -> VCode<inst::Inst> {
@@ -82,4 +92,22 @@ impl MachBackend for X64Backend {
     fn reg_universe(&self) -> RealRegUniverse {
         create_reg_universe()
     }
+}
+
+/// Create a new `isa::Builder`.
+pub fn isa_builder(triple: Triple) -> IsaBuilder {
+    IsaBuilder {
+        triple,
+        setup: settings::builder(),
+        constructor: isa_constructor,
+    }
+}
+
+fn isa_constructor(
+    _: Triple,
+    shared_flags: settings::Flags,
+    _arch_flag_builder: settings::Builder,
+) -> Box<dyn TargetIsa> {
+    let backend = X64Backend::new_with_flags(shared_flags);
+    Box::new(TargetIsaAdapter::new(backend))
 }

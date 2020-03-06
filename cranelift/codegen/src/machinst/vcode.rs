@@ -77,6 +77,11 @@ pub struct VCode<I: VCodeInst> {
     /// Block indices by IR block.
     block_by_bb: SecondaryMap<ir::Block, BlockIndex>,
 
+    /// IR block for each VCode Block. The length of this Vec will likely be
+    /// less than the total number of Blocks, because new Blocks (for edge
+    /// splits, for example) are appended during lowering.
+    bb_by_block: Vec<ir::Block>,
+
     /// Order of block IDs in final generated code.
     final_block_order: Vec<BlockIndex>,
 
@@ -180,6 +185,7 @@ impl<I: VCodeInst> VCodeBuilder<I> {
         let mut bindex: BlockIndex = 0;
         for bb in blocks.iter() {
             self.vcode.block_by_bb[*bb] = bindex;
+            self.vcode.bb_by_block.push(*bb);
             bindex += 1;
         }
         bindex
@@ -332,6 +338,7 @@ impl<I: VCodeInst> VCode<I> {
             block_succ_range: vec![],
             block_succs: vec![],
             block_by_bb: SecondaryMap::with_default(0),
+            bb_by_block: vec![],
             final_block_order: vec![],
             final_block_offsets: vec![],
             code_size: 0,
@@ -592,6 +599,15 @@ impl<I: VCodeInst> VCode<I> {
 
         sections
     }
+
+    /// Get the IR block for a BlockIndex, if one exists.
+    pub fn bindex_to_bb(&self, block: BlockIndex) -> Option<ir::Block> {
+        if (block as usize) < self.bb_by_block.len() {
+            Some(self.bb_by_block[block as usize])
+        } else {
+            None
+        }
+    }
 }
 
 impl<I: VCodeInst> RegallocFunction for VCode<I> {
@@ -761,6 +777,9 @@ impl<I: VCodeInst + ShowWithRRU> ShowWithRRU for VCode<I> {
 
             s = s + &format!("Block {}: {}", block, omitted);
             s = s + &"\n".to_string();
+            if let Some(bb) = self.bindex_to_bb(block as BlockIndex) {
+                s = s + &format!("  (original IR block: {})\n", bb);
+            }
             for succ in self.succs(block as BlockIndex) {
                 s = s + &format!("  (successor: Block {})", succ);
                 s = s + &"\n".to_string();

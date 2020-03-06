@@ -1165,7 +1165,6 @@ mod tests {
 
         isa::lookup(triple!("arm"))
             .ok()
-            .map(|b| b.as_builder())
             .map(|b| b.finish(shared_flags))
     }
 

@@ -1,10 +1,15 @@
 //! ARM 64-bit Instruction Set Architecture.
 
 #![allow(unused_imports)]
+#![allow(dead_code)]
 
 use crate::binemit::{CodeSink, MemoryCodeSink, RelocSink, StackmapSink, TrapSink};
 use crate::ir::Function;
-use crate::machinst::{compile, MachBackend, MachCompileResult, ShowWithRRU, VCode};
+use crate::isa::Builder as IsaBuilder;
+use crate::isa::TargetIsa;
+use crate::machinst::{
+    compile, MachBackend, MachCompileResult, ShowWithRRU, TargetIsaAdapter, VCode,
+};
 use crate::machinst::{ABIBody, ABICall};
 use crate::result::CodegenResult;
 use crate::settings;
@@ -35,6 +40,11 @@ impl Arm64Backend {
         Arm64Backend {
             flags: settings::Flags::new(settings::builder()),
         }
+    }
+
+    /// Create a new ARM64 backend with the given (shared) flags.
+    pub fn new_with_flags(flags: settings::Flags) -> Arm64Backend {
+        Arm64Backend { flags }
     }
 
     fn compile_vcode(&self, mut func: Function) -> VCode<inst::Inst> {
@@ -85,6 +95,24 @@ impl MachBackend for Arm64Backend {
     }
 }
 
+/// Create a new `isa::Builder`.
+pub fn isa_builder(triple: Triple) -> IsaBuilder {
+    IsaBuilder {
+        triple,
+        setup: settings::builder(),
+        constructor: isa_constructor,
+    }
+}
+
+fn isa_constructor(
+    _: Triple,
+    shared_flags: settings::Flags,
+    _arch_flag_builder: settings::Builder,
+) -> Box<dyn TargetIsa> {
+    let backend = Arm64Backend::new_with_flags(shared_flags);
+    Box::new(TargetIsaAdapter::new(backend))
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -93,6 +121,8 @@ mod test {
     use crate::ir::types::*;
     use crate::ir::{AbiParam, ExternalName, Function, InstBuilder, Signature};
     use crate::isa::CallConv;
+    use crate::settings;
+    use crate::settings::Configurable;
 
     #[test]
     fn test_compile_function() {
@@ -111,7 +141,9 @@ mod test {
         let v1 = pos.ins().iadd(arg0, v0);
         pos.ins().return_(&[v1]);
 
-        let backend = Arm64Backend::new();
+        let mut shared_flags = settings::builder();
+        shared_flags.set("opt_level", "none").unwrap();
+        let backend = Arm64Backend::new_with_flags(settings::Flags::new(shared_flags));
         let sections = backend.compile_function(func, false).unwrap().sections;
         let code = &sections.sections[0].data;
 

@@ -41,8 +41,7 @@ pub fn builder() -> Result<isa::Builder, &'static str> {
                 "support for architecture disabled at compile time"
             }
             isa::LookupError::Unsupported => "unsupported architecture",
-        })?
-        .as_builder();
+        })?;
 
     if cfg!(any(target_arch = "x86", target_arch = "x86_64")) {
         parse_x86_cpuid(&mut isa_builder)?;

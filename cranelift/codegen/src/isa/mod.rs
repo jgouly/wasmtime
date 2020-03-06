@@ -56,7 +56,7 @@ use crate::binemit;
 use crate::flowgraph;
 use crate::ir;
 pub use crate::isa::enc_tables::Encodings;
-use crate::machinst::{MachBackend, TargetIsaAdapter};
+use crate::machinst::MachBackend;
 use crate::regalloc;
 use crate::result::CodegenResult;
 use crate::settings;
@@ -89,34 +89,13 @@ mod stack;
 #[cfg(test)]
 mod test_utils;
 
-/// Represents a backend: either an old-style `Builder` for a `TargetIsa`, or a
-/// new `MachBackend`.
-pub enum IsaBackend {
-    /// An old-style `Builder`.
-    Builder(Builder),
-    /// A new-style `MachBackend`.
-    MachBackend(Box<dyn MachBackend>),
-}
-
-impl IsaBackend {
-    /// Unwrap the backend into a Builder (old-style backend), panic'ing if it
-    /// was actually a MachBackend. Should be used only for
-    /// backward-compatibility in tests while we transition all backends over.
-    pub fn as_builder(self) -> Builder {
-        match self {
-            IsaBackend::Builder(b) => b,
-            _ => panic!("IsaBackend is not a Builder"),
-        }
-    }
-}
-
 /// Returns a builder that can create a corresponding `TargetIsa`
 /// or `Err(LookupError::SupportDisabled)` if not enabled.
 macro_rules! isa_builder {
     ($name: ident, $feature: tt, $triple: ident) => {{
         #[cfg(feature = $feature)]
         {
-            Ok(IsaBackend::Builder($name::isa_builder($triple)))
+            Ok($name::isa_builder($triple))
         }
         #[cfg(not(feature = $feature))]
         {
@@ -127,35 +106,19 @@ macro_rules! isa_builder {
 
 /// Look for an ISA for the given `triple`.
 /// Return a builder that can create a corresponding `TargetIsa`.
-pub fn lookup(triple: Triple) -> Result<IsaBackend, LookupError> {
+pub fn lookup(triple: Triple) -> Result<Builder, LookupError> {
     match triple.architecture {
         Architecture::Riscv32 | Architecture::Riscv64 => isa_builder!(riscv, "riscv", triple),
         Architecture::Arm { .. } => isa_builder!(arm32, "arm32", triple),
-        // ARM64 uses the new backend.
-        Architecture::Aarch64 { .. } => Ok(IsaBackend::Builder(Builder::wrap(Box::new(
-            TargetIsaAdapter::new(arm64::Arm64Backend::new()),
-        )))),
-        // X86_64 uses the new backend.  Bwaha!
-        Architecture::X86_64 => Ok(IsaBackend::Builder(Builder::wrap(Box::new(
-            TargetIsaAdapter::new(x64::X64Backend::new()),
-        )))),
-        _ => Err(LookupError::Unsupported),
-    }
-}
-
-/// Return a MachBackend if supported.
-pub fn lookup_mach_backend(triple: Triple) -> Result<Box<dyn MachBackend>, LookupError> {
-    match triple.architecture {
-        Architecture::Aarch64 { .. } => Ok(Box::new(arm64::Arm64Backend::new())),
-        #[cfg(feature = "new-x64")]
-        Architecture::X86_64 => Ok(Box::new(x64::X64Backend::new())),
+        Architecture::Aarch64 { .. } => isa_builder!(arm64, "arm64", triple),
+        Architecture::X86_64 => isa_builder!(x64, "x86-64", triple),
         _ => Err(LookupError::Unsupported),
     }
 }
 
 /// Look for a supported ISA with the given `name`.
 /// Return a builder that can create a corresponding `TargetIsa`.
-pub fn lookup_by_name(name: &str) -> Result<IsaBackend, LookupError> {
+pub fn lookup_by_name(name: &str) -> Result<Builder, LookupError> {
     use alloc::str::FromStr;
     lookup(triple!(name))
 }
@@ -176,57 +139,25 @@ pub enum LookupError {
 /// Modify the ISA-specific settings before creating the `TargetIsa` trait object with `finish`.
 pub struct Builder {
     triple: Triple,
-    setup: Option<settings::Builder>,
-    constructor: Option<fn(Triple, settings::Flags, settings::Builder) -> Box<dyn TargetIsa>>,
-    wrapped: Option<Box<dyn TargetIsa>>,
+    setup: settings::Builder,
+    constructor: fn(Triple, settings::Flags, settings::Builder) -> Box<dyn TargetIsa>,
 }
 
 impl Builder {
-    /// Wrap an existing TargetIsa instance in a trivial Builder.
-    pub fn wrap(tisa: Box<dyn TargetIsa>) -> Builder {
-        Builder {
-            triple: tisa.triple().clone(),
-            setup: None,
-            constructor: None,
-            wrapped: Some(tisa),
-        }
-    }
-
     /// Combine the ISA-specific settings with the provided ISA-independent settings and allocate a
     /// fully configured `TargetIsa` trait object.
     pub fn finish(self, shared_flags: settings::Flags) -> Box<dyn TargetIsa> {
-        if let Some(ctor) = self.constructor {
-            (ctor)(self.triple, shared_flags, self.setup.unwrap())
-        } else {
-            self.wrapped.unwrap()
-        }
-    }
-
-    /// If this is a wrapped existing TargetIsa instance, return the wrapped instance.
-    pub fn get_wrapped(self) -> Box<dyn TargetIsa> {
-        if let Some(w) = self.wrapped {
-            w
-        } else {
-            panic!("This Builder is not a wrapped TargetIsa!");
-        }
+        (self.constructor)(self.triple, shared_flags, self.setup)
     }
 }
 
 impl settings::Configurable for Builder {
     fn set(&mut self, name: &str, value: &str) -> SetResult<()> {
-        if let Some(ref mut setup) = &mut self.setup {
-            setup.set(name, value)
-        } else {
-            Ok(())
-        }
+        self.setup.set(name, value)
     }
 
     fn enable(&mut self, name: &str) -> SetResult<()> {
-        if let Some(ref mut setup) = &mut self.setup {
-            setup.enable(name)
-        } else {
-            Ok(())
-        }
+        self.setup.enable(name)
     }
 }
 
