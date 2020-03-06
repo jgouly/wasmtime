@@ -9,8 +9,6 @@ TODO:
   - Bringup with SpiderMonkey/arm64
     - Baldrdash calling convention: no prologue/epilogue
 
-  - Compiler flags (opt level at least)?
-
   - Performance tests vs. SpiderMonkey WASM
     - make sure that cranelift-wasm can run (or wasmtime?)
     - compile benchmarks (Spec CPU? bzip2? rustfmt? tinycc?)
