@@ -475,6 +475,12 @@ impl<I: VCodeInst> VCode<I> {
             .into_iter()
             .filter(|b| !deleted[*b as usize])
             .collect();
+
+        // Rewrite successor information based on the block-rewrite map.
+        for succ in &mut self.block_succs {
+            let new_succ = block_rewrites[*succ as usize];
+            *succ = new_succ;
+        }
     }
 
     /// Mutate branch instructions to (i) lower two-way condbrs to one-way,
