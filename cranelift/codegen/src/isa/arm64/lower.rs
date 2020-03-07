@@ -622,6 +622,7 @@ fn lower_constant<C: LowerCtx<Inst>>(ctx: &mut C, rd: Writable<Reg>, value: u64)
         ctx.emit(Inst::ULoad64 {
             rd,
             mem: MemArg::label(MemLabel::ConstantData(const_data)),
+            is_reload: None,
         });
     }
 }
@@ -1239,7 +1240,11 @@ fn lower_insn_to_regs<C: LowerCtx<Inst>>(ctx: &mut C, insn: IRInst) {
                 (16, true) => Inst::SLoad16 { rd, mem },
                 (32, false) => Inst::ULoad32 { rd, mem },
                 (32, true) => Inst::SLoad32 { rd, mem },
-                (64, _) => Inst::ULoad64 { rd, mem },
+                (64, _) => Inst::ULoad64 {
+                    rd,
+                    mem,
+                    is_reload: None,
+                },
                 _ => panic!("Unsupported size in load"),
             });
         }
@@ -1268,7 +1273,11 @@ fn lower_insn_to_regs<C: LowerCtx<Inst>>(ctx: &mut C, insn: IRInst) {
                 1 | 8 => Inst::Store8 { rd, mem },
                 16 => Inst::Store16 { rd, mem },
                 32 => Inst::Store32 { rd, mem },
-                64 => Inst::Store64 { rd, mem },
+                64 => Inst::Store64 {
+                    rd,
+                    mem,
+                    is_spill: None,
+                },
                 _ => panic!("Unsupported size in store"),
             });
         }
@@ -1529,6 +1538,7 @@ fn lower_insn_to_regs<C: LowerCtx<Inst>>(ctx: &mut C, insn: IRInst) {
             ctx.emit(Inst::ULoad64 {
                 rd,
                 mem: MemArg::Label(MemLabel::ExtName(extname, 0)),
+                is_reload: None,
             });
         }
 
@@ -1543,6 +1553,7 @@ fn lower_insn_to_regs<C: LowerCtx<Inst>>(ctx: &mut C, insn: IRInst) {
             ctx.emit(Inst::ULoad64 {
                 rd,
                 mem: MemArg::Label(MemLabel::ExtName(extname, offset)),
+                is_reload: None,
             });
         }
 
@@ -1556,6 +1567,7 @@ fn lower_insn_to_regs<C: LowerCtx<Inst>>(ctx: &mut C, insn: IRInst) {
                     ctx.emit(Inst::ULoad64 {
                         rd: tmp,
                         mem: MemArg::Label(MemLabel::ExtName(extname, 0)),
+                        is_reload: None,
                     });
                     let sig = ctx.call_sig(insn).unwrap();
                     assert!(inputs.len() == sig.params.len());

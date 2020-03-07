@@ -30,7 +30,7 @@
 //! let shared_builder = settings::builder();
 //! let shared_flags = settings::Flags::new(shared_builder);
 //!
-//! match isa::lookup(triple!("riscv32")).map(|b| b.as_builder()) {
+//! match isa::lookup(triple!("riscv32")) {
 //!     Err(_) => {
 //!         // The RISC-V target ISA is not available.
 //!     }

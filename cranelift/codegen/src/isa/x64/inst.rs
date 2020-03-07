@@ -2437,6 +2437,16 @@ impl MachInst for Inst {
         }
     }
 
+    fn is_spill(&self) -> Option<(SpillSlot, Reg)> {
+        // TODO
+        None
+    }
+
+    fn is_reload(&self) -> Option<(Writable<Reg>, SpillSlot)> {
+        // TODO
+        None
+    }
+
     fn is_term<'a>(&'a self) -> MachTerminator<'a> {
         match self {
             // Interesting cases.

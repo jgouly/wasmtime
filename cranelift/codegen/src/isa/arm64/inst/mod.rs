@@ -221,7 +221,11 @@ pub enum Inst {
     /// A signed (sign-extending) 32-bit load.
     SLoad32 { rd: Writable<Reg>, mem: MemArg },
     /// A 64-bit load.
-    ULoad64 { rd: Writable<Reg>, mem: MemArg },
+    ULoad64 {
+        rd: Writable<Reg>,
+        mem: MemArg,
+        is_reload: Option<SpillSlot>,
+    },
 
     /// An 8-bit store.
     Store8 { rd: Reg, mem: MemArg },
@@ -230,7 +234,11 @@ pub enum Inst {
     /// A 32-bit store.
     Store32 { rd: Reg, mem: MemArg },
     /// A 64-bit store.
-    Store64 { rd: Reg, mem: MemArg },
+    Store64 {
+        rd: Reg,
+        mem: MemArg,
+        is_spill: Option<SpillSlot>,
+    },
 
     /// A store of a pair of registers.
     StoreP64 { rt: Reg, rt2: Reg, mem: PairMemArg },
@@ -753,9 +761,14 @@ fn arm64_map_regs(
             rd: map_wr(d, rd),
             mem: map_mem(u, mem),
         },
-        &mut Inst::ULoad64 { rd, ref mem } => Inst::ULoad64 {
+        &mut Inst::ULoad64 {
+            rd,
+            ref mem,
+            is_reload,
+        } => Inst::ULoad64 {
             rd: map_wr(d, rd),
             mem: map_mem(u, mem),
+            is_reload,
         },
         &mut Inst::Store8 { rd, ref mem } => Inst::Store8 {
             rd: map(u, rd),
@@ -769,9 +782,14 @@ fn arm64_map_regs(
             rd: map(u, rd),
             mem: map_mem(u, mem),
         },
-        &mut Inst::Store64 { rd, ref mem } => Inst::Store64 {
+        &mut Inst::Store64 {
+            rd,
+            ref mem,
+            is_spill,
+        } => Inst::Store64 {
             rd: map(u, rd),
             mem: map_mem(u, mem),
+            is_spill,
         },
         &mut Inst::StoreP64 { rt, rt2, ref mem } => Inst::StoreP64 {
             rt: map(u, rt),
@@ -922,11 +940,30 @@ impl MachInst for Inst {
     }
 
     fn is_move(&self) -> Option<(Writable<Reg>, Reg)> {
-        // TEMPORARY FIX, 2020-03-05: regalloc seems to give
-        // a buggy result when we enable move-coalescing. So
-        // for now, all inserted moves remain explicit.
         match self {
-            //    &Inst::Mov { rd, rm } => Some((rd, rm)),
+            &Inst::Mov { rd, rm } => Some((rd, rm)),
+            _ => None,
+        }
+    }
+
+    fn is_spill(&self) -> Option<(SpillSlot, Reg)> {
+        match self {
+            &Inst::Store64 {
+                rd,
+                is_spill: Some(slot),
+                ..
+            } => Some((slot, rd)),
+            _ => None,
+        }
+    }
+
+    fn is_reload(&self) -> Option<(Writable<Reg>, SpillSlot)> {
+        match self {
+            &Inst::ULoad64 {
+                rd,
+                is_reload: Some(slot),
+                ..
+            } => Some((rd, slot)),
             _ => None,
         }
     }
@@ -1262,7 +1299,7 @@ impl Inst {
             | &Inst::SLoad16 { rd, ref mem }
             | &Inst::ULoad32 { rd, ref mem }
             | &Inst::SLoad32 { rd, ref mem }
-            | &Inst::ULoad64 { rd, ref mem } => {
+            | &Inst::ULoad64 { rd, ref mem, .. } => {
                 let (mem_str, mem) = mem_finalize_for_show(mem, mb_rru, consts, jt_offsets);
 
                 let is_unscaled = match &mem {
@@ -1293,7 +1330,7 @@ impl Inst {
             &Inst::Store8 { rd, ref mem }
             | &Inst::Store16 { rd, ref mem }
             | &Inst::Store32 { rd, ref mem }
-            | &Inst::Store64 { rd, ref mem } => {
+            | &Inst::Store64 { rd, ref mem, .. } => {
                 let (mem_str, mem) = mem_finalize_for_show(mem, mb_rru, consts, jt_offsets);
 
                 let is_unscaled = match &mem {
