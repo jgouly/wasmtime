@@ -1093,7 +1093,7 @@ impl MachInst for Inst {
                 ..
             } => {
                 taken.lower(targets, my_offset);
-                not_taken.lower(targets, my_offset);
+                not_taken.lower(targets, my_offset + 4);
             }
             &mut Inst::Jump { ref mut dest } => {
                 dest.lower(targets, my_offset);

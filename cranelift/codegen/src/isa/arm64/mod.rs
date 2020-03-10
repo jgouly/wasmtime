@@ -161,4 +161,72 @@ mod test {
 
         assert_eq!(code, &golden);
     }
+
+    #[test]
+    fn test_branch_lowering() {
+        let name = ExternalName::testcase("test0");
+        let mut sig = Signature::new(CallConv::SystemV);
+        sig.params.push(AbiParam::new(I32));
+        sig.returns.push(AbiParam::new(I32));
+        let mut func = Function::with_name_signature(name, sig);
+
+        let bb0 = func.dfg.make_block();
+        let arg0 = func.dfg.append_block_param(bb0, I32);
+        let bb1 = func.dfg.make_block();
+        let bb2 = func.dfg.make_block();
+        let bb3 = func.dfg.make_block();
+
+        let mut pos = FuncCursor::new(&mut func);
+        pos.insert_block(bb0);
+        let v0 = pos.ins().iconst(I32, 0x12345678);
+        let v1 = pos.ins().iadd(arg0, v0);
+        pos.ins().brnz(v1, bb1, &[]);
+        pos.ins().jump(bb2, &[]);
+        pos.insert_block(bb1);
+        pos.ins().brnz(v1, bb2, &[]);
+        pos.ins().jump(bb3, &[]);
+        pos.insert_block(bb2);
+        let v2 = pos.ins().iadd(v1, v0);
+        pos.ins().brnz(v2, bb2, &[]);
+        pos.ins().jump(bb1, &[]);
+        pos.insert_block(bb3);
+        let v3 = pos.ins().isub(v1, v0);
+        pos.ins().return_(&[v3]);
+
+        let mut shared_flags = settings::builder();
+        shared_flags.set("opt_level", "none").unwrap();
+        let backend = Arm64Backend::new_with_flags(settings::Flags::new(shared_flags));
+        let result = backend
+            .compile_function(func, /* want_disasm = */ false)
+            .unwrap();
+        let code = &result.sections.sections[0].data;
+
+        // stp	x29, x30, [sp, #-16]!
+        // mov	x29, sp
+        // mov	x1, x0
+        // ldr	x0, 0x50
+        // add	w1, w1, w0
+        // mov	w2, w1
+        // cbz	x2, 0x34
+        // mov	w2, w1
+        // cbz	x2, 0x34
+        // sub	w0, w1, w0
+        // mov	sp, x29
+        // ldp	x29, x30, [sp], #16
+        // ret
+        // add	w2, w1, w0
+        // mov	w2, w2
+        // cbnz	x2, 0x34   <---- compound branch (cond / uncond)
+        // b	0x1c       <----
+
+        let golden = vec![
+            0xfd, 0x7b, 0xbf, 0xa9, 0xfd, 0x03, 0x00, 0x91, 0xe1, 0x03, 0x00, 0xaa, 0x20, 0x02,
+            0x00, 0x58, 0x21, 0x00, 0x00, 0x0b, 0xe2, 0x03, 0x01, 0x2a, 0xe2, 0x00, 0x00, 0xb4,
+            0xe2, 0x03, 0x01, 0x2a, 0xa2, 0x00, 0x00, 0xb5, 0x20, 0x00, 0x00, 0x4b, 0xbf, 0x03,
+            0x00, 0x91, 0xfd, 0x7b, 0xc1, 0xa8, 0xc0, 0x03, 0x5f, 0xd6, 0x22, 0x00, 0x00, 0x0b,
+            0xe2, 0x03, 0x02, 0x2a, 0xc2, 0xff, 0xff, 0xb5, 0xf7, 0xff, 0xff, 0x17,
+        ];
+
+        assert_eq!(code, &golden);
+    }
 }
