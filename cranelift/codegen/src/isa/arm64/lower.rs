@@ -1587,6 +1587,7 @@ fn lower_insn_to_regs<C: LowerCtx<Inst>>(ctx: &mut C, insn: IRInst) {
             for inst in abi.gen_stack_pre_adjust().into_iter() {
                 ctx.emit(inst);
             }
+            assert!(inputs.len() == abi.num_args());
             for (i, input) in inputs.iter().enumerate() {
                 let arg_reg = input_to_reg(ctx, *input, NarrowValueMode::None);
                 ctx.emit(abi.gen_copy_reg_to_arg(i, arg_reg));

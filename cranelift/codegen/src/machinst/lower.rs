@@ -203,6 +203,11 @@ impl<'a, I: VCodeInst> Lower<'a, I> {
 
     fn gen_arg_setup(&mut self) {
         if let Some(entry_bb) = self.f.layout.entry_block() {
+            debug!(
+                "gen_arg_setup: entry BB {} args are:\n{:?}",
+                entry_bb,
+                self.f.dfg.block_params(entry_bb)
+            );
             for (i, param) in self.f.dfg.block_params(entry_bb).iter().enumerate() {
                 let reg = Writable::from_reg(self.value_regs[*param]);
                 let insn = self.vcode.abi().gen_copy_arg_to_reg(i, reg);

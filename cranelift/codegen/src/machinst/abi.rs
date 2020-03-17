@@ -110,6 +110,9 @@ pub trait ABIBody<I: VCodeInst> {
 ///
 /// This trait is thus provided for convenience to the backends.
 pub trait ABICall<I: VCodeInst> {
+    /// Get the number of arguments expected.
+    fn num_args(&self) -> usize;
+
     /// Save the clobbered registers.
     /// Copy an argument value from a source register, prior to the call.
     fn gen_copy_reg_to_arg(&self, idx: usize, from_reg: Reg) -> I;

@@ -141,7 +141,7 @@ fn in_vec_reg(ty: ir::Type) -> bool {
 impl ARM64ABIBody {
     /// Create a new body ABI instance.
     pub fn new(f: &ir::Function) -> ARM64ABIBody {
-        //println!("ARM64 ABI: func signature {:?}", f.signature);
+        debug!("ARM64 ABI: func signature {:?}", f.signature);
 
         let sig = ABISig::from_func_sig(&f.signature);
 
@@ -624,6 +624,10 @@ fn adjust_stack(amt: u64, is_sub: bool) -> Vec<Inst> {
 }
 
 impl ABICall<Inst> for ARM64ABICall {
+    fn num_args(&self) -> usize {
+        self.sig.args.len()
+    }
+
     fn gen_stack_pre_adjust(&self) -> Vec<Inst> {
         adjust_stack(self.sig.stack_arg_space as u64, /* is_sub = */ true)
     }

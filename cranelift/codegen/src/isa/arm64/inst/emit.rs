@@ -25,9 +25,9 @@ pub fn memlabel_finalize<O: MachSectionOutput>(
     label: &MemLabel,
     consts: &mut O,
     jt_offsets: &[CodeOffset],
-) -> i32 {
+) -> (i32, String) {
     match label {
-        &MemLabel::PCRel(rel) => rel,
+        &MemLabel::PCRel(rel, ref comment) => (rel, comment.clone()),
         &MemLabel::ConstantData(ref data) => {
             let len = data.len();
             let alignment = if len <= 4 {
@@ -40,7 +40,9 @@ pub fn memlabel_finalize<O: MachSectionOutput>(
             consts.align_to(alignment);
             let off = consts.cur_offset_from_start();
             consts.put_data(data.iter().as_slice());
-            (off as i32) - (insn_off as i32)
+            let ret = (off as i32) - (insn_off as i32);
+            let comment = format!("Constant data: {:?}", data);
+            (ret, comment)
         }
         &MemLabel::JumpTable(jt) => {
             let jt_off = if jt.index() < jt_offsets.len() {
@@ -49,15 +51,23 @@ pub fn memlabel_finalize<O: MachSectionOutput>(
                 // Can happen when invoked from show_rru().
                 0
             };
-            (jt_off as i32) - (insn_off as i32)
+            let ret = (jt_off as i32) - (insn_off as i32);
+            let comment = format!("Base address of jump table {}", jt);
+            (ret, comment)
         }
-        &MemLabel::CodeOffset(off) => (off as i32) - (insn_off as i32),
+        &MemLabel::CodeOffset(off) => (
+            (off as i32) - (insn_off as i32),
+            format!("Code offset {}", off),
+        ),
         &MemLabel::ExtName(ref name, offset) => {
             consts.align_to(8);
             let off = consts.cur_offset_from_start();
             consts.add_reloc(Reloc::Abs8, name, offset);
             consts.put_data(&[0, 0, 0, 0, 0, 0, 0, 0]);
-            (off as i32) - (insn_off as i32)
+            (
+                (off as i32) - (insn_off as i32),
+                format!("Ref to name {}, offset {} in constant pool", name, offset),
+            )
         }
     }
 }
@@ -80,7 +90,7 @@ pub fn mem_finalize<O: MachSectionOutput>(
                 _ => unreachable!(),
             };
             if let Some(simm9) = SImm9::maybe_from_i64(off) {
-                let mem = MemArg::Unscaled(fp_reg(), simm9);
+                let mem = MemArg::Unscaled(basereg, simm9);
                 (vec![], mem)
             } else {
                 let tmp = writable_spilltmp_reg();
@@ -106,8 +116,8 @@ pub fn mem_finalize<O: MachSectionOutput>(
             }
         }
         &MemArg::Label(ref label) => {
-            let off: i32 = memlabel_finalize(insn_off, label, consts, jt_offsets);
-            (vec![], MemArg::Label(MemLabel::PCRel(off)))
+            let (off, comment) = memlabel_finalize(insn_off, label, consts, jt_offsets);
+            (vec![], MemArg::Label(MemLabel::PCRel(off, comment)))
         }
         _ => (vec![], mem.clone()),
     }
@@ -559,7 +569,7 @@ impl<O: MachSectionOutput> MachInstEmit<O> for Inst {
                     }
                     &MemArg::Label(ref label) => {
                         let offset = match label {
-                            &MemLabel::PCRel(off) => {
+                            &MemLabel::PCRel(off, _) => {
                                 if off < 0 {
                                     // Happens only before computing final section
                                     // offsets.
@@ -871,7 +881,7 @@ impl<O: MachSectionOutput> MachInstEmit<O> for Inst {
                 sink.put4(0xd4200000);
             }
             &Inst::Adr { rd, ref label } => {
-                let off =
+                let (off, _) =
                     memlabel_finalize(sink.cur_offset_from_start(), label, consts, jt_offsets);
                 // TODO: support larger offsets with ADRP / ADR pair.
                 assert!(off > -(1 << 20));
@@ -2057,7 +2067,7 @@ mod test {
         insns.push((
             Inst::ULoad64 {
                 rd: writable_xreg(1),
-                mem: MemArg::Label(MemLabel::PCRel(64)),
+                mem: MemArg::Label(MemLabel::PCRel(64, "".to_owned())),
                 is_reload: None,
             },
             "01020058",
@@ -2840,7 +2850,7 @@ mod test {
         insns.push((
             Inst::Adr {
                 rd: writable_xreg(15),
-                label: MemLabel::PCRel((1 << 20) - 4),
+                label: MemLabel::PCRel((1 << 20) - 4, "".to_owned()),
             },
             "EFFF7F10",
             "adr x15, pc+1048572",
