@@ -353,6 +353,7 @@ impl<O: MachSectionOutput> MachInstEmit<O> for Inst {
                     ALUOp::Lsl32 | ALUOp::Lsl64 => 0b001000,
                     _ => 0b000000,
                 };
+                assert_ne!(writable_stack_reg(), rd);
                 sink.put4(enc_arith_rrr(top11, bit15_10, rd, rn, rm));
             }
             &Inst::AluRRRR {
