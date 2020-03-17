@@ -2067,7 +2067,7 @@ mod test {
         insns.push((
             Inst::ULoad64 {
                 rd: writable_xreg(1),
-                mem: MemArg::Label(MemLabel::PCRel(64, "".to_owned())),
+                mem: MemArg::Label(MemLabel::PCRel(64, "".to_string())),
                 is_reload: None,
             },
             "01020058",
@@ -2080,7 +2080,7 @@ mod test {
                 is_reload: None,
             },
             "81000058000000000000000000000000EFCDAB8967452301",
-            "ldr x1, pc+0",
+            "ldr x1, pc+0 // Constant data: ConstantData([239, 205, 171, 137, 103, 69, 35, 1])",
         ));
         insns.push((
             Inst::ULoad64 {
@@ -2107,7 +2107,7 @@ mod test {
                 is_reload: None,
             },
             "8F000058EF011D8BE10140F9000000000080000000000000",
-            "ldr x15, pc+0 ; add x15, x15, fp ; ldr x1, [x15]",
+            "ldr x15, pc+0 // Constant data: ConstantData([0, 128, 0, 0, 0, 0, 0, 0]) ; add x15, x15, fp ; ldr x1, [x15]",
         ));
 
         insns.push((
@@ -2850,7 +2850,7 @@ mod test {
         insns.push((
             Inst::Adr {
                 rd: writable_xreg(15),
-                label: MemLabel::PCRel((1 << 20) - 4, "".to_owned()),
+                label: MemLabel::PCRel((1 << 20) - 4, "".to_string()),
             },
             "EFFF7F10",
             "adr x15, pc+1048572",
