@@ -49,6 +49,7 @@ use std::collections::{
     HashMap,
 };
 
+mod check_trace;
 mod code_translator;
 mod environ;
 mod func_translator;

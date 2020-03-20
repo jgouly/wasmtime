@@ -25,10 +25,12 @@ wat = "1.0.9"
 target-lexicon = "0.10"
 
 [features]
-default = ["std"]
+default = ["std", "check-tracing"]
 std = ["cranelift-codegen/std", "cranelift-frontend/std"]
 core = ["hashbrown", "cranelift-codegen/core", "cranelift-frontend/core"]
 enable-serde = ["serde"]
+check-tracing = []
+wasm-tracer = []
 
 [badges]
 maintenance = { status = "experimental" }

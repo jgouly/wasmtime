@@ -23,6 +23,7 @@
 //! That is why `translate_function_body` takes an object having the `WasmRuntime` trait as
 //! argument.
 use super::{hash_map, HashMap};
+use crate::check_trace::CheckTracer;
 use crate::environ::{FuncEnvironment, GlobalVariable, ReturnMode, WasmResult};
 use crate::state::{ControlStackFrame, ElseData, FuncTranslationState, ModuleTranslationState};
 use crate::translation_utils::{
@@ -54,6 +55,8 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
     builder: &mut FunctionBuilder,
     state: &mut FuncTranslationState,
     environ: &mut FE,
+    pc: u32,
+    tracer: &mut Option<CheckTracer>,
 ) -> WasmResult<()> {
     if !state.reachable {
         translate_unreachable_operator(module_translation_state, &op, builder, state, environ)?;
@@ -458,6 +461,9 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
                 let return_count = frame.num_return_values();
                 (return_count, frame.br_destination())
             };
+
+            tracer.as_mut().map(|t| t.leave(builder));
+
             {
                 let return_args = state.peekn_mut(return_count);
                 let return_types = wasm_param_types(&builder.func.signature.returns, |i| {
@@ -565,77 +571,212 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
         Operator::I32Load8U {
             memarg: MemoryImmediate { flags: _, offset },
         } => {
-            translate_load(*offset, ir::Opcode::Uload8, I32, builder, state, environ)?;
+            translate_load(
+                *offset,
+                ir::Opcode::Uload8,
+                I32,
+                builder,
+                state,
+                environ,
+                pc,
+                tracer,
+            )?;
         }
         Operator::I32Load16U {
             memarg: MemoryImmediate { flags: _, offset },
         } => {
-            translate_load(*offset, ir::Opcode::Uload16, I32, builder, state, environ)?;
+            translate_load(
+                *offset,
+                ir::Opcode::Uload16,
+                I32,
+                builder,
+                state,
+                environ,
+                pc,
+                tracer,
+            )?;
         }
         Operator::I32Load8S {
             memarg: MemoryImmediate { flags: _, offset },
         } => {
-            translate_load(*offset, ir::Opcode::Sload8, I32, builder, state, environ)?;
+            translate_load(
+                *offset,
+                ir::Opcode::Sload8,
+                I32,
+                builder,
+                state,
+                environ,
+                pc,
+                tracer,
+            )?;
         }
         Operator::I32Load16S {
             memarg: MemoryImmediate { flags: _, offset },
         } => {
-            translate_load(*offset, ir::Opcode::Sload16, I32, builder, state, environ)?;
+            translate_load(
+                *offset,
+                ir::Opcode::Sload16,
+                I32,
+                builder,
+                state,
+                environ,
+                pc,
+                tracer,
+            )?;
         }
         Operator::I64Load8U {
             memarg: MemoryImmediate { flags: _, offset },
         } => {
-            translate_load(*offset, ir::Opcode::Uload8, I64, builder, state, environ)?;
+            translate_load(
+                *offset,
+                ir::Opcode::Uload8,
+                I64,
+                builder,
+                state,
+                environ,
+                pc,
+                tracer,
+            )?;
         }
         Operator::I64Load16U {
             memarg: MemoryImmediate { flags: _, offset },
         } => {
-            translate_load(*offset, ir::Opcode::Uload16, I64, builder, state, environ)?;
+            translate_load(
+                *offset,
+                ir::Opcode::Uload16,
+                I64,
+                builder,
+                state,
+                environ,
+                pc,
+                tracer,
+            )?;
         }
         Operator::I64Load8S {
             memarg: MemoryImmediate { flags: _, offset },
         } => {
-            translate_load(*offset, ir::Opcode::Sload8, I64, builder, state, environ)?;
+            translate_load(
+                *offset,
+                ir::Opcode::Sload8,
+                I64,
+                builder,
+                state,
+                environ,
+                pc,
+                tracer,
+            )?;
         }
         Operator::I64Load16S {
             memarg: MemoryImmediate { flags: _, offset },
         } => {
-            translate_load(*offset, ir::Opcode::Sload16, I64, builder, state, environ)?;
+            translate_load(
+                *offset,
+                ir::Opcode::Sload16,
+                I64,
+                builder,
+                state,
+                environ,
+                pc,
+                tracer,
+            )?;
         }
         Operator::I64Load32S {
             memarg: MemoryImmediate { flags: _, offset },
         } => {
-            translate_load(*offset, ir::Opcode::Sload32, I64, builder, state, environ)?;
+            translate_load(
+                *offset,
+                ir::Opcode::Sload32,
+                I64,
+                builder,
+                state,
+                environ,
+                pc,
+                tracer,
+            )?;
         }
         Operator::I64Load32U {
             memarg: MemoryImmediate { flags: _, offset },
         } => {
-            translate_load(*offset, ir::Opcode::Uload32, I64, builder, state, environ)?;
+            translate_load(
+                *offset,
+                ir::Opcode::Uload32,
+                I64,
+                builder,
+                state,
+                environ,
+                pc,
+                tracer,
+            )?;
         }
         Operator::I32Load {
             memarg: MemoryImmediate { flags: _, offset },
         } => {
-            translate_load(*offset, ir::Opcode::Load, I32, builder, state, environ)?;
+            translate_load(
+                *offset,
+                ir::Opcode::Load,
+                I32,
+                builder,
+                state,
+                environ,
+                pc,
+                tracer,
+            )?;
         }
         Operator::F32Load {
             memarg: MemoryImmediate { flags: _, offset },
         } => {
-            translate_load(*offset, ir::Opcode::Load, F32, builder, state, environ)?;
+            translate_load(
+                *offset,
+                ir::Opcode::Load,
+                F32,
+                builder,
+                state,
+                environ,
+                pc,
+                tracer,
+            )?;
         }
         Operator::I64Load {
             memarg: MemoryImmediate { flags: _, offset },
         } => {
-            translate_load(*offset, ir::Opcode::Load, I64, builder, state, environ)?;
+            translate_load(
+                *offset,
+                ir::Opcode::Load,
+                I64,
+                builder,
+                state,
+                environ,
+                pc,
+                tracer,
+            )?;
         }
         Operator::F64Load {
             memarg: MemoryImmediate { flags: _, offset },
         } => {
-            translate_load(*offset, ir::Opcode::Load, F64, builder, state, environ)?;
+            translate_load(
+                *offset,
+                ir::Opcode::Load,
+                F64,
+                builder,
+                state,
+                environ,
+                pc,
+                tracer,
+            )?;
         }
         Operator::V128Load {
             memarg: MemoryImmediate { flags: _, offset },
         } => {
-            translate_load(*offset, ir::Opcode::Load, I8X16, builder, state, environ)?;
+            translate_load(
+                *offset,
+                ir::Opcode::Load,
+                I8X16,
+                builder,
+                state,
+                environ,
+                pc,
+                tracer,
+            )?;
         }
         /****************************** Store instructions ***********************************
          * Wasm specifies an integer alignment flag but we drop it in Cranelift.
@@ -653,7 +794,15 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
         | Operator::F64Store {
             memarg: MemoryImmediate { flags: _, offset },
         } => {
-            translate_store(*offset, ir::Opcode::Store, builder, state, environ)?;
+            translate_store(
+                *offset,
+                ir::Opcode::Store,
+                builder,
+                state,
+                environ,
+                pc,
+                tracer,
+            )?;
         }
         Operator::I32Store8 {
             memarg: MemoryImmediate { flags: _, offset },
@@ -661,7 +810,15 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
         | Operator::I64Store8 {
             memarg: MemoryImmediate { flags: _, offset },
         } => {
-            translate_store(*offset, ir::Opcode::Istore8, builder, state, environ)?;
+            translate_store(
+                *offset,
+                ir::Opcode::Istore8,
+                builder,
+                state,
+                environ,
+                pc,
+                tracer,
+            )?;
         }
         Operator::I32Store16 {
             memarg: MemoryImmediate { flags: _, offset },
@@ -669,17 +826,41 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
         | Operator::I64Store16 {
             memarg: MemoryImmediate { flags: _, offset },
         } => {
-            translate_store(*offset, ir::Opcode::Istore16, builder, state, environ)?;
+            translate_store(
+                *offset,
+                ir::Opcode::Istore16,
+                builder,
+                state,
+                environ,
+                pc,
+                tracer,
+            )?;
         }
         Operator::I64Store32 {
             memarg: MemoryImmediate { flags: _, offset },
         } => {
-            translate_store(*offset, ir::Opcode::Istore32, builder, state, environ)?;
+            translate_store(
+                *offset,
+                ir::Opcode::Istore32,
+                builder,
+                state,
+                environ,
+                pc,
+                tracer,
+            )?;
         }
         Operator::V128Store {
             memarg: MemoryImmediate { flags: _, offset },
         } => {
-            translate_store(*offset, ir::Opcode::Store, builder, state, environ)?;
+            translate_store(
+                *offset,
+                ir::Opcode::Store,
+                builder,
+                state,
+                environ,
+                pc,
+                tracer,
+            )?;
         }
         /****************************** Nullary Operators ************************************/
         Operator::I32Const { value } => state.push1(builder.ins().iconst(I32, i64::from(*value))),
@@ -1214,6 +1395,8 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
                 builder,
                 state,
                 environ,
+                pc,
+                tracer,
             )?;
             let splatted = builder.ins().splat(type_of(op), state.pop1());
             state.push1(splatted)
@@ -1675,6 +1858,8 @@ fn translate_load<FE: FuncEnvironment + ?Sized>(
     builder: &mut FunctionBuilder,
     state: &mut FuncTranslationState,
     environ: &mut FE,
+    pc: u32,
+    tracer: &mut Option<CheckTracer>,
 ) -> WasmResult<()> {
     let addr32 = state.pop1();
     // We don't yet support multiple linear memories.
@@ -1688,6 +1873,16 @@ fn translate_load<FE: FuncEnvironment + ?Sized>(
         .ins()
         .Load(opcode, result_ty, flags, offset.into(), base);
     state.push1(dfg.first_result(load));
+    tracer.as_mut().map(|t| {
+        let addr = if offset != 0 {
+            let offset = builder.ins().iconst(I32, offset as i64);
+            builder.ins().iadd(addr32, offset)
+        } else {
+            addr32
+        };
+        let val = builder.func.dfg.first_result(load);
+        t.load(builder, pc, addr, val);
+    });
     Ok(())
 }
 
@@ -1698,6 +1893,8 @@ fn translate_store<FE: FuncEnvironment + ?Sized>(
     builder: &mut FunctionBuilder,
     state: &mut FuncTranslationState,
     environ: &mut FE,
+    pc: u32,
+    tracer: &mut Option<CheckTracer>,
 ) -> WasmResult<()> {
     let (addr32, val) = state.pop2();
     let val_ty = builder.func.dfg.value_type(val);
@@ -1710,6 +1907,15 @@ fn translate_store<FE: FuncEnvironment + ?Sized>(
     builder
         .ins()
         .Store(opcode, val_ty, flags, offset.into(), val, base);
+    tracer.as_mut().map(|t| {
+        let addr = if offset != 0 {
+            let offset = builder.ins().iconst(I32, offset as i64);
+            builder.ins().iadd(addr32, offset)
+        } else {
+            addr32
+        };
+        t.store(builder, pc, addr, val);
+    });
     Ok(())
 }
 

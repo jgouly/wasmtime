@@ -1430,6 +1430,13 @@ fn lower_insn_to_regs<C: LowerCtx<Inst>>(ctx: &mut C, insn: IRInst) {
             });
         }
 
+        Opcode::Bitcast => {
+            let rd = output_to_reg(ctx, outputs[0]);
+            let rm = input_to_reg(ctx, inputs[0], NarrowValueMode::ZeroExtend64);
+            // TODO: float/int bitcasts?
+            ctx.emit(Inst::gen_move(rd, rm));
+        }
+
         Opcode::Isplit | Opcode::Iconcat => {
             // TODO
             unimplemented!()
@@ -1644,7 +1651,6 @@ fn lower_insn_to_regs<C: LowerCtx<Inst>>(ctx: &mut C, insn: IRInst) {
         | Opcode::Splat
         | Opcode::Insertlane
         | Opcode::Extractlane
-        | Opcode::Bitcast
         | Opcode::RawBitcast
         | Opcode::ScalarToVector => {
             // TODO

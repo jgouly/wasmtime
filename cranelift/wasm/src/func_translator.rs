@@ -4,6 +4,7 @@
 //! function to Cranelift IR guided by a `FuncEnvironment` which provides information about the
 //! WebAssembly module and the runtime environment.
 
+use crate::check_trace::CheckTracer;
 use crate::code_translator::{bitcast_arguments, translate_operator, wasm_param_types};
 use crate::environ::{FuncEnvironment, ReturnMode, WasmResult};
 use crate::state::{FuncTranslationState, ModuleTranslationState};
@@ -227,12 +228,28 @@ fn parse_function_body<FE: FuncEnvironment + ?Sized>(
     // The control stack is initialized with a single block representing the whole function.
     debug_assert_eq!(state.control_stack.len(), 1, "State not initialized");
 
+    // Add tracing prologue, if enabled.
+    let mut tracer = if cfg!(feature = "wasm-tracer") {
+        Some(CheckTracer::new(builder))
+    } else {
+        None
+    };
+
     // Keep going until the final `End` operator which pops the outermost block.
     while !state.control_stack.is_empty() {
         builder.set_srcloc(cur_srcloc(&reader));
+        let pc = reader.original_position() as u32;
         let op = reader.read_operator()?;
         environ.before_translate_operator(&op, builder, state)?;
-        translate_operator(module_translation_state, &op, builder, state, environ)?;
+        translate_operator(
+            module_translation_state,
+            &op,
+            builder,
+            state,
+            environ,
+            pc,
+            &mut tracer,
+        )?;
         environ.after_translate_operator(&op, builder, state)?;
     }
 
@@ -244,6 +261,7 @@ fn parse_function_body<FE: FuncEnvironment + ?Sized>(
     if state.reachable {
         debug_assert!(builder.is_pristine());
         if !builder.is_unreachable() {
+            tracer.as_mut().map(|t| t.leave(builder));
             match environ.return_mode() {
                 ReturnMode::NormalReturns => {
                     let return_types = wasm_param_types(&builder.func.signature.returns, |i| {

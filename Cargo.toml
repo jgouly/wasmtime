@@ -79,6 +79,7 @@ lightbeam = [
 ]
 jitdump = ["wasmtime-profiling/jitdump"]
 test_programs = ["test-programs/test_programs"]
+wasm-tracer = ["wasmtime-jit/wasm-tracer"]
 
 [badges]
 maintenance = { status = "actively-developed" }
