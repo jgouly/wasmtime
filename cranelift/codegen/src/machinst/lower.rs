@@ -22,6 +22,7 @@ use alloc::boxed::Box;
 use alloc::vec::Vec;
 use log::debug;
 use smallvec::SmallVec;
+use std::collections::VecDeque;
 use std::ops::Range;
 
 /// A context that machine-specific lowering code can use to emit lowered instructions. This is the
@@ -228,11 +229,42 @@ impl<'a, I: VCodeInst> Lower<'a, I> {
         self.vcode.push(inst);
     }
 
+    fn find_reachable_bbs(&self) -> SmallVec<[Block; 16]> {
+        if let Some(entry) = self.f.layout.entry_block() {
+            let mut ret = SmallVec::new();
+            let mut queue = VecDeque::new();
+            let mut visited = SecondaryMap::with_default(false);
+            queue.push_back(entry);
+            visited[entry] = true;
+            while !queue.is_empty() {
+                let b = queue.pop_front().unwrap();
+                ret.push(b);
+                let mut succs: SmallVec<[Block; 16]> = SmallVec::new();
+                for inst in self.f.layout.block_insts(b) {
+                    if self.f.dfg[inst].opcode().is_branch() {
+                        succs.extend(branch_targets(self.f, b, inst).into_iter());
+                    }
+                }
+                for succ in succs.into_iter() {
+                    if !visited[succ] {
+                        queue.push_back(succ);
+                        visited[succ] = true;
+                    }
+                }
+            }
+
+            ret
+        } else {
+            SmallVec::new()
+        }
+    }
+
     /// Lower the function.
     pub fn lower<B: LowerBackend<MInst = I>>(mut self, backend: &B) -> VCode<I> {
+        // Find all reachable blocks.
+        let mut bbs = self.find_reachable_bbs();
         // Work backward (reverse block order, reverse through each block), skipping insns with zero
         // uses.
-        let mut bbs: SmallVec<[Block; 16]> = self.f.layout.blocks().collect();
         bbs.reverse();
 
         // This records a Block-to-BlockIndex map so that branch targets can be resolved.
@@ -258,28 +290,15 @@ impl<'a, I: VCodeInst> Lower<'a, I> {
                 let op = self.f.dfg[inst].opcode();
                 if op.is_branch() {
                     // Find the original target.
-                    let instdata = &self.f.dfg[inst];
                     let mut add_succ = |next_bb| {
                         let edge_block = next_bindex;
                         next_bindex += 1;
                         edge_blocks_by_inst[inst].push(edge_block);
                         edge_blocks.push((inst, edge_block, next_bb));
                     };
-                    match op {
-                        Opcode::Fallthrough | Opcode::FallthroughReturn => {
-                            add_succ(self.f.layout.next_block(*bb).unwrap());
-                        }
-                        Opcode::BrTable => {
-                            if let Some(targets) = branch_targets_indirect(&self.f, instdata) {
-                                for bb in targets {
-                                    add_succ(bb);
-                                }
-                            }
-                        }
-                        _ => {
-                            add_succ(branch_target(instdata).unwrap());
-                        }
-                    };
+                    for succ in branch_targets(self.f, *bb, inst).into_iter() {
+                        add_succ(succ);
+                    }
                 }
             }
         }
@@ -661,31 +680,29 @@ impl<'a, I: VCodeInst> LowerCtx<I> for Lower<'a, I> {
     }
 }
 
-fn branch_target(inst: &InstructionData) -> Option<Block> {
-    match inst {
-        &InstructionData::Jump { destination, .. }
-        | &InstructionData::Branch { destination, .. }
-        | &InstructionData::BranchInt { destination, .. }
-        | &InstructionData::BranchIcmp { destination, .. }
-        | &InstructionData::BranchFloat { destination, .. } => Some(destination),
-        &InstructionData::BranchTable { .. } => panic!("branch_target() on branch table"),
-        _ => None,
-    }
-}
-
-fn branch_targets_indirect<'a>(
-    f: &'a Function,
-    inst: &'a InstructionData,
-) -> Option<impl Iterator<Item = Block> + 'a> {
-    match inst {
-        &InstructionData::BranchTable {
-            destination, table, ..
-        } => {
-            Some(
-                std::iter::once(destination) // default block
-                    .chain(f.jump_tables[table].as_slice().iter().cloned()),
-            )
+fn branch_targets(f: &Function, block: Block, inst: Inst) -> SmallVec<[Block; 16]> {
+    let mut ret = SmallVec::new();
+    if f.dfg[inst].opcode() == Opcode::Fallthrough {
+        ret.push(f.layout.next_block(block).unwrap());
+    } else {
+        match &f.dfg[inst] {
+            &InstructionData::Jump { destination, .. }
+            | &InstructionData::Branch { destination, .. }
+            | &InstructionData::BranchInt { destination, .. }
+            | &InstructionData::BranchIcmp { destination, .. }
+            | &InstructionData::BranchFloat { destination, .. } => {
+                ret.push(destination);
+            }
+            &InstructionData::BranchTable {
+                destination, table, ..
+            } => {
+                ret.push(destination);
+                for dest in f.jump_tables[table].as_slice() {
+                    ret.push(*dest);
+                }
+            }
+            _ => {}
         }
-        _ => None,
     }
+    ret
 }
