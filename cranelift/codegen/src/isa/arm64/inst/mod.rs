@@ -1054,7 +1054,11 @@ impl MachInst for Inst {
                 not_taken,
                 kind,
             } => {
-                if taken.as_block_index() == fallthrough {
+                if taken.as_block_index() == fallthrough
+                    && not_taken.as_block_index() == fallthrough
+                {
+                    *self = Inst::Nop;
+                } else if taken.as_block_index() == fallthrough {
                     *self = Inst::CondBrLowered {
                         target: not_taken,
                         kind: kind.invert(),

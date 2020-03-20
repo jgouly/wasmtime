@@ -43,3 +43,23 @@ block2:
 ; nextln: mov sp, fp
 ; nextln: ldp fp, lr, [sp], #16
 ; nextln: ret
+
+function %f(i64, i64) -> i64 {
+block0(v0: i64, v1: i64):
+  v2 = ifcmp v0, v1
+  brif eq v2, block1
+  jump block1
+
+block1:
+  v4 = iconst.i64 1
+  return v4
+}
+
+; check: stp fp, lr, [sp, #-16]!
+; nextln: mov fp, sp
+; nextln: subs xzr, x0, x1
+; check: Block 0:
+; check: movz x0, #1
+; nextln: mov sp, fp
+; nextln: ldp fp, lr, [sp], #16
+; nextln: ret
