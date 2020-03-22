@@ -60,6 +60,9 @@ anyhow = "1.0.19"
 [profile.release.build-override]
 opt-level = 0
 
+[profile.release]
+debug = true
+
 [workspace]
 members = [
   "cranelift",
