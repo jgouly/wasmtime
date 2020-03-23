@@ -2083,7 +2083,15 @@ impl LowerBackend for Arm64Backend {
                         rm: rtmp2.to_reg(),
                     });
                     // Jump to it!
-                    let jt_targets: Vec<BlockIndex> = targets.iter().skip(1).cloned().collect();
+                    // N.B.: `targets` is used only for the CFG-tracking machinery
+                    // in the VCode container; the jumptable is encoded separately.
+                    // Hence, we *include* the default target here as a possible target,
+                    // even though it would be reached by the bounds-check branch
+                    // branch above. From the point of view of the rest of the pipeline,
+                    // this whole sequence is one open-coded black-box; sinking the
+                    // edge origin point to here should not change any other
+                    // behavior.
+                    let jt_targets: Vec<BlockIndex> = targets.iter().cloned().collect();
                     ctx.emit(Inst::IndirectBr {
                         rn: rtmp2.to_reg(),
                         targets: jt_targets,

@@ -25,6 +25,14 @@ where
 
     // Perform register allocation.
     let result = allocate_registers(&mut vcode, RegAllocAlgorithm::Backtracking, universe)
+        .map_err(|err| {
+            debug!(
+                "Register allocation error for vcode\n{}\nError: {:?}",
+                vcode.show_rru(Some(universe)),
+                err
+            );
+            err
+        })
         .expect("register allocation");
 
     // Reorder vcode into final order and copy out final instruction sequence
