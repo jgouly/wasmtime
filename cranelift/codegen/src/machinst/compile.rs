@@ -5,6 +5,7 @@ use crate::machinst::*;
 
 use log::debug;
 use regalloc::{allocate_registers, RegAllocAlgorithm};
+use std::env;
 
 /// Compile the given function down to VCode with allocated registers, ready
 /// for binary emission.
@@ -24,7 +25,19 @@ where
     debug!("vcode from lowering: \n{}", vcode.show_rru(Some(universe)));
 
     // Perform register allocation.
-    let result = allocate_registers(&mut vcode, RegAllocAlgorithm::Backtracking, universe)
+    let algorithm = match env::var("REGALLOC") {
+        Ok(str) => match str.as_str() {
+            "lsrac" => RegAllocAlgorithm::LinearScanChecked,
+            "lsra" => RegAllocAlgorithm::LinearScan,
+            // to wit: btc doesn't mean "bitcoin" here
+            "btc" => RegAllocAlgorithm::BacktrackingChecked,
+            _ => RegAllocAlgorithm::Backtracking,
+        },
+        // By default use backtracking, which is the fastest.
+        Err(_) => RegAllocAlgorithm::Backtracking,
+    };
+
+    let result = allocate_registers(&mut vcode, algorithm, universe)
         .map_err(|err| {
             debug!(
                 "Register allocation error for vcode\n{}\nError: {:?}",
