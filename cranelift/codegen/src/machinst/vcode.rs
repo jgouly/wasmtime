@@ -319,8 +319,13 @@ fn is_trivial_jump_block<I: VCodeInst>(vcode: &VCode<I>, block: BlockIndex) -> O
 
 fn look_through_trivial_jumps<I: VCodeInst>(vcode: &VCode<I>, block: BlockIndex) -> BlockIndex {
     let mut b = block;
+    let mut limit = 0;
     while let Some(next) = is_trivial_jump_block(vcode, b) {
         b = next;
+        limit += 1;
+        if limit > 5 {
+            break;
+        }
     }
     b
 }
