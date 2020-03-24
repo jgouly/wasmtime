@@ -2,6 +2,7 @@
 
 use crate::ir::Function;
 use crate::machinst::*;
+use crate::timing;
 
 use log::debug;
 use regalloc::{allocate_registers, RegAllocAlgorithm};
@@ -37,16 +38,19 @@ where
         Err(_) => RegAllocAlgorithm::Backtracking,
     };
 
-    let result = allocate_registers(&mut vcode, algorithm, universe)
-        .map_err(|err| {
-            debug!(
-                "Register allocation error for vcode\n{}\nError: {:?}",
-                vcode.show_rru(Some(universe)),
+    let result = {
+        let _tt = timing::regalloc();
+        allocate_registers(&mut vcode, algorithm, universe)
+            .map_err(|err| {
+                debug!(
+                    "Register allocation error for vcode\n{}\nError: {:?}",
+                    vcode.show_rru(Some(universe)),
+                    err
+                );
                 err
-            );
-            err
-        })
-        .expect("register allocation");
+            })
+            .expect("register allocation")
+    };
 
     // Reorder vcode into final order and copy out final instruction sequence
     // all at once. This also inserts prologues/epilogues.
