@@ -61,3 +61,34 @@ Building an aarch64 binary
       qemu-aarch64 target/aarch64-unknown-linux-gnu/release/wasmtime \
       ~/test.wasm
     ```
+
+Using the wasm-tracer to check execution
+========================================
+
+- Build a wasmtime binary on a "golden reference platform" (probably x86) and
+  on the platform under development (e.g., ARM64):
+
+    ```
+    # on an x86-64 machine with above cross-compilation setup:
+
+    $ cargo build --release --features wasm-tracer
+    $ cargo build --release --features wasm-tracer --target aarch64-unknown-linux-gnu
+    ````
+
+- Then run a wasm test with both builds:
+
+    ```
+    $ target/release/wasmtime test.wasm 2>log.x86
+    $ LD_LIBRARY_PATH=/usr/aarch64-linux-gnu/lib64/ \
+      QEMU_LD_PREFIX=/usr/aarch64-linux-gnu/ \
+      qemu-aarch64 target/aarch64-unknown-linux-gnu/release/wasmtime \
+      test.wasm 2>log.arm64
+    ```
+
+- Then we have two log files that record function entries, exits, and
+  Wasm-level memory loads and stores, which should be deterministic, thus
+  identical from both runs:
+
+   ```
+   $ diff -u log.x86 log.arm64
+   ```
