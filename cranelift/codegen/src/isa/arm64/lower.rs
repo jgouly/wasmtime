@@ -801,26 +801,66 @@ fn lower_insn_to_regs<C: LowerCtx<Inst>>(ctx: &mut C, insn: IRInst) {
         Opcode::Umulhi | Opcode::Smulhi => {
             let rd = output_to_reg(ctx, outputs[0]);
             let is_signed = op == Opcode::Smulhi;
-            let narrow_mode = if is_signed {
-                NarrowValueMode::SignExtend64
-            } else {
-                NarrowValueMode::ZeroExtend64
-            };
-            let alu_op = if is_signed {
-                ALUOp::SMulH
-            } else {
-                ALUOp::UMulH
-            };
-            let rn = input_to_reg(ctx, inputs[0], narrow_mode);
-            let rm = input_to_reg(ctx, inputs[1], narrow_mode);
-            let ra = zero_reg();
-            ctx.emit(Inst::AluRRRR {
-                alu_op,
-                rd,
-                rn,
-                rm,
-                ra,
-            });
+            let input_ty = ctx.input_ty(insn, 0);
+            assert!(ctx.input_ty(insn, 1) == input_ty);
+            assert!(ctx.output_ty(insn, 0) == input_ty);
+
+            match input_ty {
+                I64 => {
+                    let rn = input_to_reg(ctx, inputs[0], NarrowValueMode::None);
+                    let rm = input_to_reg(ctx, inputs[1], NarrowValueMode::None);
+                    let ra = zero_reg();
+                    let alu_op = if is_signed {
+                        ALUOp::SMulH
+                    } else {
+                        ALUOp::UMulH
+                    };
+                    ctx.emit(Inst::AluRRRR {
+                        alu_op,
+                        rd,
+                        rn,
+                        rm,
+                        ra,
+                    });
+                }
+                I32 | I16 | I8 => {
+                    let narrow_mode = if is_signed {
+                        NarrowValueMode::SignExtend64
+                    } else {
+                        NarrowValueMode::ZeroExtend64
+                    };
+                    let rn = input_to_reg(ctx, inputs[0], narrow_mode);
+                    let rm = input_to_reg(ctx, inputs[1], narrow_mode);
+                    let ra = zero_reg();
+                    ctx.emit(Inst::AluRRRR {
+                        alu_op: ALUOp::MAdd64,
+                        rd,
+                        rn,
+                        rm,
+                        ra,
+                    });
+                    let shift_op = if is_signed {
+                        ALUOp::Asr64
+                    } else {
+                        ALUOp::Lsr64
+                    };
+                    let shift_amt = match input_ty {
+                        I32 => 32,
+                        I16 => 16,
+                        I8 => 8,
+                        _ => unreachable!(),
+                    };
+                    ctx.emit(Inst::AluRRImmShift {
+                        alu_op: shift_op,
+                        rd,
+                        rn: rd.to_reg(),
+                        immshift: ImmShift::maybe_from_u64(shift_amt).unwrap(),
+                    });
+                }
+                _ => {
+                    panic!("Unsupported argument type for umulhi/smulhi: {}", input_ty);
+                }
+            }
         }
 
         Opcode::Udiv | Opcode::Sdiv | Opcode::Urem | Opcode::Srem => {
