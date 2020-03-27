@@ -317,19 +317,6 @@ fn is_trivial_jump_block<I: VCodeInst>(vcode: &VCode<I>, block: BlockIndex) -> O
     }
 }
 
-fn look_through_trivial_jumps<I: VCodeInst>(vcode: &VCode<I>, block: BlockIndex) -> BlockIndex {
-    let mut b = block;
-    let mut limit = 0;
-    while let Some(next) = is_trivial_jump_block(vcode, b) {
-        b = next;
-        limit += 1;
-        if limit > 5 {
-            break;
-        }
-    }
-    b
-}
-
 impl<I: VCodeInst> VCode<I> {
     /// New empty VCode.
     fn new(abi: Box<dyn ABIBody<I>>) -> VCode<I> {
@@ -444,36 +431,44 @@ impl<I: VCodeInst> VCode<I> {
     /// Removes redundant branches, rewriting targets to point directly to the
     /// ultimate block at the end of a chain of trivial one-target jumps.
     pub fn remove_redundant_branches(&mut self) {
-        // For each block, compute the actual target block, looking through all
-        // blocks with single-target jumps.
-        //
-        // The outer `Option` indicates whether the dynamic programming algorithm
-        // has computed this value yet. The inner `Option` indicates whether there
-        // is a redirect.
+        // For each block, compute the actual target block, looking through up to one
+        // block with single-target jumps (this will remove empty edge blocks inserted
+        // by phi-lowering).
         let block_rewrites: Vec<BlockIndex> = (0..self.num_blocks() as u32)
-            .map(|bix| look_through_trivial_jumps(self, bix))
+            .map(|bix| is_trivial_jump_block(self, bix).unwrap_or(bix))
             .collect();
-        let deleted: Vec<bool> = block_rewrites
-            .iter()
-            .enumerate()
-            .map(|(i, target)| i != *target as usize)
-            .collect();
+        let mut refcounts: Vec<usize> = vec![0; self.num_blocks()];
 
         debug!(
             "remove_redundant_branches: block_rewrites = {:?}",
             block_rewrites
         );
 
+        refcounts[self.entry as usize] = 1;
+
         for block in 0..self.num_blocks() as u32 {
             for insn in self.block_insns(BlockIx::new(block)) {
                 self.get_insn_mut(insn)
                     .with_block_rewrites(&block_rewrites[..]);
+                match self.get_insn(insn).is_term() {
+                    MachTerminator::Uncond(bix) => {
+                        refcounts[bix as usize] += 1;
+                    }
+                    MachTerminator::Cond(bix1, bix2) => {
+                        refcounts[bix1 as usize] += 1;
+                        refcounts[bix2 as usize] += 1;
+                    }
+                    _ => {}
+                }
             }
         }
 
         for jt_entry in &mut self.jt_entries {
             *jt_entry = block_rewrites[*jt_entry as usize];
+            refcounts[*jt_entry as usize] += 1;
         }
+
+        let deleted: Vec<bool> = refcounts.iter().map(|r| *r == 0).collect();
 
         let block_order = std::mem::replace(&mut self.final_block_order, vec![]);
         self.final_block_order = block_order
