@@ -15,6 +15,7 @@ use cranelift_codegen::print_errors::pretty_error;
 use cranelift_codegen::{binemit, isa, Context};
 use cranelift_entity::PrimaryMap;
 use cranelift_wasm::{DefinedFuncIndex, FuncIndex, FuncTranslator, ModuleTranslationState};
+use log::info;
 use rayon::prelude::{IntoParallelRefIterator, ParallelIterator};
 use std::hash::{Hash, Hasher};
 
@@ -212,6 +213,8 @@ fn compile(
         .collect::<Vec<(DefinedFuncIndex, &FunctionBodyData<'_>)>>()
         .par_iter()
         .map_init(FuncTranslator::new, |func_translator, (i, input)| {
+            info!("");
+            info!("=====*****=====*****===== WASMTIME BEGIN FUNCTION =====*****=====*****=====");
             let func_index = module.func_index(*i);
             let mut context = Context::new();
             context.func.name = get_func_name(func_index);
