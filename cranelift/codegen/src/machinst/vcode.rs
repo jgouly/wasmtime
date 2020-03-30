@@ -704,6 +704,10 @@ impl<I: VCodeInst> RegallocFunction for VCode<I> {
         I::gen_move(to_reg.map(|r| r.to_reg()), from_reg.to_reg())
     }
 
+    fn gen_zero_len_nop(&self) -> I {
+        I::gen_zero_len_nop()
+    }
+
     fn maybe_direct_reload(&self, insn: &I, reg: VirtualReg, slot: SpillSlot) -> Option<I> {
         insn.maybe_direct_reload(reg, slot)
     }

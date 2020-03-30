@@ -2479,6 +2479,10 @@ impl MachInst for Inst {
         }
     }
 
+    fn gen_zero_len_nop() -> Inst {
+        unimplemented!()
+    }
+
     fn gen_nop(_preferred_size: usize) -> Inst {
         unimplemented!()
     }

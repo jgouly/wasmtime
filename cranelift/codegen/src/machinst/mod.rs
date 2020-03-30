@@ -168,6 +168,9 @@ pub trait MachInst: Clone + Debug {
     /// Generate a move.
     fn gen_move(to_reg: Writable<Reg>, from_reg: Reg) -> Self;
 
+    /// Generate a zero-length no-op.
+    fn gen_zero_len_nop() -> Self;
+
     /// Possibly operate on a value directly in a spill-slot rather than a
     /// register. Useful if the machine has register-memory instruction forms
     /// (e.g., add directly from or directly to memory), like x86.

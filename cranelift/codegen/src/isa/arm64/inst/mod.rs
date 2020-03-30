@@ -997,6 +997,10 @@ impl MachInst for Inst {
         Inst::mov(to_reg, from_reg)
     }
 
+    fn gen_zero_len_nop() -> Inst {
+        Inst::Nop
+    }
+
     fn gen_nop(preferred_size: usize) -> Inst {
         // We can't give a NOP (or any insn) < 4 bytes.
         assert!(preferred_size >= 4);
