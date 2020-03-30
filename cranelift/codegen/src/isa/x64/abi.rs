@@ -10,6 +10,7 @@ use crate::ir::Type;
 use crate::isa;
 use crate::isa::x64::inst::*;
 use crate::machinst::*;
+use crate::settings;
 
 use alloc::vec::Vec;
 
@@ -45,7 +46,7 @@ pub struct X64ABIBody {
 
     /// Calculated while creating the prologue, and used when creating the epilogue. Amount by
     /// which RSP is adjusted downwards to allocate the spill area.
-    spill_area_size_bytes: Option<usize>,
+    frame_size_bytes: Option<usize>,
 
     call_conv: isa::CallConv,
 }
@@ -168,7 +169,7 @@ impl X64ABIBody {
             stack_slots_size: stack_offset,
             clobbered: Set::empty(),
             num_spill_slots: None,
-            spill_area_size_bytes: None,
+            frame_size_bytes: None,
             call_conv: f.signature.call_conv.clone(),
         }
     }
@@ -284,19 +285,16 @@ impl ABIBody<Inst> for X64ABIBody {
         unimplemented!()
     }
 
-    fn gen_prologue(&mut self) -> Vec<Inst> {
-        let total_stacksize = self.stack_slots_size + 8 * self.num_spill_slots.unwrap();
-        let total_stacksize = (total_stacksize + 15) & !15; // 16-align the stack.
-
-        let r_rbp = reg_RBP();
+    fn gen_prologue(&mut self, flags: &settings::Flags) -> Vec<Inst> {
         let r_rsp = reg_RSP();
-        let w_rbp = Writable::<Reg>::from_reg(r_rbp);
-        let w_rsp = Writable::<Reg>::from_reg(r_rsp);
 
         let mut insts = vec![];
 
         // Baldrdash generates its own prologue sequence, so we don't have to.
         if !self.call_conv.extends_baldrdash() {
+            let r_rbp = reg_RBP();
+            let w_rbp = Writable::<Reg>::from_reg(r_rbp);
+
             // The "traditional" pre-preamble
             // RSP before the call will be 0 % 16.  So here, it is 8 % 16.
             insts.push(i_Push64(ip_RMI_R(r_rbp)));
@@ -304,9 +302,8 @@ impl ABIBody<Inst> for X64ABIBody {
             insts.push(i_Mov_R_R(true, r_rsp, w_rbp));
         }
 
-        // Save callee saved registers that we trash.  Keep track of how much
-        // space we've used, so as to know what we have to do to get the base
-        // of the spill area 0 % 16.
+        // Save callee saved registers that we trash. Keep track of how much space we've used, so
+        // as to know what we have to do to get the base of the spill area 0 % 16.
         let mut callee_saved_used = 0;
         let clobbered = get_callee_saves(self.clobbered.to_vec());
         for reg in clobbered {
@@ -320,85 +317,91 @@ impl ABIBody<Inst> for X64ABIBody {
             }
         }
 
-        // Allocate the frame.  Now, be careful: RSP may now not be 0 % 16.
-        // If it isn't, increase total_stacksize to compensate.  Because
-        // total_stacksize is 0 % 16, this ensures that RSP after this
-        // subtraction, is still 16 aligned.
-        //
-        // Ultra paranoid approach:
-        let mut spill_area_size = total_stacksize;
-        match callee_saved_used % 16 {
-            0 => spill_area_size += 0,
-            8 => spill_area_size += 8,
-            // note that in general we map N to += 16-N
-            // Really there should be no other cases, though.
-            _ => panic!("gen_prologue(x86): total_stacksize is not 8-aligned"),
+        let mut total_stacksize = self.stack_slots_size + 8 * self.num_spill_slots.unwrap();
+        if self.call_conv.extends_baldrdash() {
+            // Baldrdash expects the stack to expect at least the number of words set in
+            // baldrdash_prologue_words; count them here.
+            debug_assert!(
+                !flags.enable_probestack(),
+                "baldrdash does not expect cranelift to emit stack probes"
+            );
+            total_stacksize += flags.baldrdash_prologue_words() as usize * 8;
         }
-        if spill_area_size > 0x7FFF_FFFF {
+
+        debug_assert!(callee_saved_used % 16 == 0 || callee_saved_used % 16 == 8);
+        let frame_size = total_stacksize + callee_saved_used % 16;
+
+        // Now make sure the frame stack is aligned, so RSP == 0 % 16 in the function's body.
+        let frame_size = (frame_size + 15) & !15;
+
+        if frame_size > 0x7FFF_FFFF {
             panic!("gen_prologue(x86): total_stacksize >= 2G");
         }
-        if spill_area_size > 0 {
-            // FIXME JRS 2020Feb16: handle spill_area_size >= 2G?
-            insts.push(i_Alu_RMI_R(
-                true,
-                RMI_R_Op::Sub,
-                ip_RMI_I(spill_area_size as u32),
-                w_rsp,
-            ));
+
+        if !self.call_conv.extends_baldrdash() {
+            // Explicitly allocate the frame.
+            let w_rsp = Writable::<Reg>::from_reg(r_rsp);
+            if frame_size > 0 {
+                // FIXME JRS 2020Feb16: handle frame_size >= 2G?
+                insts.push(i_Alu_RMI_R(
+                    true,
+                    RMI_R_Op::Sub,
+                    ip_RMI_I(frame_size as u32),
+                    w_rsp,
+                ));
+            }
         }
 
         // Stash this value.  We'll need it for the epilogue.
-        debug_assert!(self.spill_area_size_bytes.is_none());
-        self.spill_area_size_bytes = Some(spill_area_size);
+        debug_assert!(self.frame_size_bytes.is_none());
+        self.frame_size_bytes = Some(frame_size);
 
         insts
     }
 
-    fn gen_epilogue(&self) -> Vec<Inst> {
-        let r_rbp = reg_RBP();
-        let r_rsp = reg_RSP();
-        let w_rbp = Writable::<Reg>::from_reg(r_rbp);
-        let w_rsp = Writable::<Reg>::from_reg(r_rsp);
+    fn gen_epilogue(&self, _flags: &settings::Flags) -> Vec<Inst> {
         let mut insts = vec![];
 
         // Undo what we did in the prologue.
 
         // Clear the spill area and the 16-alignment padding below it.
-        let spill_area_size = self.spill_area_size_bytes.unwrap();
-        if spill_area_size > 0 {
-            // FIXME JRS 2020Feb16: what if spill_area_size >= 2G?
-            insts.push(i_Alu_RMI_R(
-                true,
-                RMI_R_Op::Add,
-                ip_RMI_I(spill_area_size as u32),
-                w_rsp,
-            ));
+        if !self.call_conv.extends_baldrdash() {
+            let frame_size = self.frame_size_bytes.unwrap();
+            if frame_size > 0 {
+                let r_rsp = reg_RSP();
+                let w_rsp = Writable::<Reg>::from_reg(r_rsp);
+
+                // FIXME JRS 2020Feb16: what if frame_size >= 2G?
+                insts.push(i_Alu_RMI_R(
+                    true,
+                    RMI_R_Op::Add,
+                    ip_RMI_I(frame_size as u32),
+                    w_rsp,
+                ));
+            }
         }
 
         // Restore regs.
-        let mut tmp_insts = vec![];
         let clobbered = get_callee_saves(self.clobbered.to_vec());
-        for w_real_reg in clobbered {
+        for w_real_reg in clobbered.into_iter().rev() {
             match w_real_reg.to_reg().get_class() {
                 RegClass::I64 => {
                     // TODO: make these conversion sequences less cumbersome.
-                    tmp_insts.push(i_Pop64(Writable::<Reg>::from_reg(
+                    insts.push(i_Pop64(Writable::<Reg>::from_reg(
                         w_real_reg.to_reg().to_reg(),
                     )))
                 }
                 _ => unimplemented!(),
             }
         }
-        tmp_insts.reverse();
-        for i in tmp_insts {
-            insts.push(i);
-        }
 
         // Baldrdash generates its own preamble.
         if !self.call_conv.extends_baldrdash() {
+            let r_rbp = reg_RBP();
+            let w_rbp = Writable::<Reg>::from_reg(r_rbp);
+
             // Undo the "traditional" pre-preamble
             // RSP before the call will be 0 % 16.  So here, it is 8 % 16.
-            // uhhhh .. insts.push(i_Mov_R_R(true, r_rbp, w_rsp));
             insts.push(i_Pop64(w_rbp));
             insts.push(i_Ret());
         }
@@ -407,7 +410,7 @@ impl ABIBody<Inst> for X64ABIBody {
     }
 
     fn frame_size(&self) -> u32 {
-        self.spill_area_size_bytes
+        self.frame_size_bytes
             .expect("frame size not computed before prologue generation") as u32
     }
 

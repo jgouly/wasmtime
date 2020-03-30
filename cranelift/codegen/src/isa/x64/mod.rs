@@ -48,7 +48,8 @@ impl X64Backend {
         // This performs lowering to VCode, register-allocates the code, computes
         // block layout and finalizes branches. The result is ready for binary emission.
         let abi = Box::new(abi::X64ABIBody::new(&func));
-        compile::compile::<Self>(&mut func, self, abi)
+        let flags = self.flags();
+        compile::compile::<Self>(&mut func, self, abi, flags)
     }
 }
 

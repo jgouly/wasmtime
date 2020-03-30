@@ -9,6 +9,7 @@ use crate::ir::StackSlot;
 use crate::isa::arm64::inst::*;
 use crate::isa::arm64::*;
 use crate::machinst::*;
+use crate::settings;
 
 use alloc::vec::Vec;
 
@@ -372,7 +373,7 @@ impl ABIBody<Inst> for ARM64ABIBody {
         store_stack(fp_off, from_reg, ty, Some(slot))
     }
 
-    fn gen_prologue(&mut self) -> Vec<Inst> {
+    fn gen_prologue(&mut self, _flags: &settings::Flags) -> Vec<Inst> {
         let mut insts = vec![];
         let total_stacksize = self.stackslots_size + 8 * self.spillslots.unwrap();
         let total_stacksize = (total_stacksize + 15) & !15; // 16-align the stack.
@@ -455,7 +456,7 @@ impl ABIBody<Inst> for ARM64ABIBody {
         insts
     }
 
-    fn gen_epilogue(&self) -> Vec<Inst> {
+    fn gen_epilogue(&self, _flags: &settings::Flags) -> Vec<Inst> {
         let mut insts = vec![];
 
         // Restore clobbered registers.

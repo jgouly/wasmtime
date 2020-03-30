@@ -3,6 +3,8 @@
 use crate::ir;
 use crate::ir::StackSlot;
 use crate::machinst::*;
+use crate::settings;
+
 use regalloc::{Reg, Set, SpillSlot, VirtualReg, Writable};
 
 /// Trait implemented by an object that tracks ABI-related state (e.g., stack
@@ -73,13 +75,13 @@ pub trait ABIBody<I: VCodeInst> {
     /// `store_retval`, and spillslot accesses.)  |self| is mutable so that we
     /// can store information in it which will be useful when creating the
     /// epilogue.
-    fn gen_prologue(&mut self) -> Vec<I>;
+    fn gen_prologue(&mut self, flags: &settings::Flags) -> Vec<I>;
 
     /// Generate an epilogue, post-regalloc. Note that this must generate the
     /// actual return instruction (rather than emitting this in the lowering
     /// logic), because the epilogue code comes before the return and the two are
     /// likely closely related.
-    fn gen_epilogue(&self) -> Vec<I>;
+    fn gen_epilogue(&self, flags: &settings::Flags) -> Vec<I>;
 
     /// Returns the full frame size for the given function, after prologue emission has run. This
     /// comprises the spill space, incoming argument space, alignment padding, etc.
