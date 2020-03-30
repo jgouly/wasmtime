@@ -1482,16 +1482,7 @@ fn lower_insn_to_regs<C: LowerCtx<Inst>>(ctx: &mut C, insn: IRInst) {
             unimplemented!()
         }
 
-        Opcode::FallthroughReturn => {
-            // What is this? The definition says it's a "special
-            // instruction" meant to allow falling through into an
-            // epilogue that will then return; that just sounds like a
-            // normal fallthrough. TODO: Do we need to handle this
-            // differently?
-            panic!("FallthroughReturn should not appear!");
-        }
-
-        Opcode::Return => {
+        Opcode::FallthroughReturn | Opcode::Return => {
             for (i, input) in inputs.iter().enumerate() {
                 // N.B.: according to the AArch64 ABI, the top bits of a register
                 // (above the bits for the value's type) are undefined, so we
@@ -1758,6 +1749,7 @@ fn lower_insn_to_regs<C: LowerCtx<Inst>>(ctx: &mut C, insn: IRInst) {
             panic!("ALU+imm and ALU+carry ops should not appear here!");
         }
 
+        #[cfg(feature = "x86")]
         Opcode::X86Udivmodx
         | Opcode::X86Sdivmodx
         | Opcode::X86Umulx

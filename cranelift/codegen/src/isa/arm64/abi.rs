@@ -6,6 +6,7 @@ use crate::ir;
 use crate::ir::types;
 use crate::ir::types::*;
 use crate::ir::StackSlot;
+use crate::isa;
 use crate::isa::arm64::inst::*;
 use crate::isa::arm64::*;
 use crate::machinst::*;
@@ -122,6 +123,7 @@ pub struct ARM64ABIBody {
     clobbered: Set<Writable<RealReg>>, // clobbered registers, from regalloc.
     spillslots: Option<usize>,         // total number of spillslots, from regalloc.
     frame_size: Option<usize>,
+    call_conv: isa::CallConv,
 }
 
 fn in_int_reg(ty: ir::Type) -> bool {
@@ -141,7 +143,7 @@ fn in_vec_reg(ty: ir::Type) -> bool {
 
 impl ARM64ABIBody {
     /// Create a new body ABI instance.
-    pub fn new(f: &ir::Function) -> ARM64ABIBody {
+    pub fn new(f: &ir::Function) -> Self {
         debug!("ARM64 ABI: func signature {:?}", f.signature);
 
         let sig = ABISig::from_func_sig(&f.signature);
@@ -157,13 +159,14 @@ impl ARM64ABIBody {
             stackslots.push(off);
         }
 
-        ARM64ABIBody {
+        Self {
             sig,
             stackslots,
             stackslots_size: stack_offset,
             clobbered: Set::empty(),
             spillslots: None,
             frame_size: None,
+            call_conv: f.signature.call_conv,
         }
     }
 }
@@ -373,33 +376,42 @@ impl ABIBody<Inst> for ARM64ABIBody {
         store_stack(fp_off, from_reg, ty, Some(slot))
     }
 
-    fn gen_prologue(&mut self, _flags: &settings::Flags) -> Vec<Inst> {
+    fn gen_prologue(&mut self, flags: &settings::Flags) -> Vec<Inst> {
         let mut insts = vec![];
-        let total_stacksize = self.stackslots_size + 8 * self.spillslots.unwrap();
+        if !self.call_conv.extends_baldrdash() {
+            // stp fp (x29), lr (x30), [sp, #-16]!
+            insts.push(Inst::StoreP64 {
+                rt: fp_reg(),
+                rt2: link_reg(),
+                mem: PairMemArg::PreIndexed(
+                    writable_stack_reg(),
+                    SImm7Scaled::maybe_from_i64(-16, types::I64).unwrap(),
+                ),
+            });
+            // mov fp (x29), sp. This uses the ADDI rd, rs, 0 form of `MOV` because
+            // the usual encoding (`ORR`) does not work with SP.
+            insts.push(Inst::AluRRImm12 {
+                alu_op: ALUOp::Add64,
+                rd: writable_fp_reg(),
+                rn: stack_reg(),
+                imm12: Imm12 {
+                    bits: 0,
+                    shift12: false,
+                },
+            });
+        }
+
+        let mut total_stacksize = self.stackslots_size + 8 * self.spillslots.unwrap();
+        if self.call_conv.extends_baldrdash() {
+            debug_assert!(
+                !flags.enable_probestack(),
+                "baldrdash does not expect cranelift to emit stack probes"
+            );
+            total_stacksize += flags.baldrdash_prologue_words() as usize * 8;
+        }
         let total_stacksize = (total_stacksize + 15) & !15; // 16-align the stack.
 
-        // stp fp (x29), lr (x30), [sp, #-16]!
-        insts.push(Inst::StoreP64 {
-            rt: fp_reg(),
-            rt2: link_reg(),
-            mem: PairMemArg::PreIndexed(
-                writable_stack_reg(),
-                SImm7Scaled::maybe_from_i64(-16, types::I64).unwrap(),
-            ),
-        });
-        // mov fp (x29), sp. This uses the ADDI rd, rs, 0 form of `MOV` because
-        // the usual encoding (`ORR`) does not work with SP.
-        insts.push(Inst::AluRRImm12 {
-            alu_op: ALUOp::Add64,
-            rd: writable_fp_reg(),
-            rn: stack_reg(),
-            imm12: Imm12 {
-                bits: 0,
-                shift12: false,
-            },
-        });
-
-        if total_stacksize > 0 {
+        if !self.call_conv.extends_baldrdash() && total_stacksize > 0 {
             // sub sp, sp, #total_stacksize
             if let Some(imm12) = Imm12::maybe_from_u64(total_stacksize as u64) {
                 let sub_inst = Inst::AluRRImm12 {
@@ -438,8 +450,8 @@ impl ABIBody<Inst> for ARM64ABIBody {
             } else {
                 (reg_pair[0].to_reg().to_reg(), zero_reg())
             };
-            assert!(r1.get_class() == RegClass::I64);
-            assert!(r2.get_class() == RegClass::I64);
+            debug_assert!(r1.get_class() == RegClass::I64);
+            debug_assert!(r2.get_class() == RegClass::I64);
 
             // stp r1, r2, [sp, #-16]!
             insts.push(Inst::StoreP64 {
@@ -485,26 +497,29 @@ impl ABIBody<Inst> for ARM64ABIBody {
             });
         }
 
-        // The MOV (alias of ORR) interprets x31 as XZR, so use an ADD here.
-        // MOV to SP is an alias of ADD.
-        insts.push(Inst::AluRRImm12 {
-            alu_op: ALUOp::Add64,
-            rd: writable_stack_reg(),
-            rn: fp_reg(),
-            imm12: Imm12 {
-                bits: 0,
-                shift12: false,
-            },
-        });
-        insts.push(Inst::LoadP64 {
-            rt: writable_fp_reg(),
-            rt2: writable_link_reg(),
-            mem: PairMemArg::PostIndexed(
-                writable_stack_reg(),
-                SImm7Scaled::maybe_from_i64(16, types::I64).unwrap(),
-            ),
-        });
-        insts.push(Inst::Ret {});
+        if !self.call_conv.extends_baldrdash() {
+            // The MOV (alias of ORR) interprets x31 as XZR, so use an ADD here.
+            // MOV to SP is an alias of ADD.
+            insts.push(Inst::AluRRImm12 {
+                alu_op: ALUOp::Add64,
+                rd: writable_stack_reg(),
+                rn: fp_reg(),
+                imm12: Imm12 {
+                    bits: 0,
+                    shift12: false,
+                },
+            });
+            insts.push(Inst::LoadP64 {
+                rt: writable_fp_reg(),
+                rt2: writable_link_reg(),
+                mem: PairMemArg::PostIndexed(
+                    writable_stack_reg(),
+                    SImm7Scaled::maybe_from_i64(16, types::I64).unwrap(),
+                ),
+            });
+            insts.push(Inst::Ret {});
+        }
+
         debug!("Epilogue: {:?}", insts);
         insts
     }

@@ -58,6 +58,7 @@ pub enum ValueConversion {
 
 impl ValueConversion {
     /// Apply this conversion to a type, return the converted type.
+    #[allow(dead_code)] // TODO keep this until the new backend is finished.
     pub fn apply(self, ty: Type) -> Type {
         match self {
             Self::IntSplit => ty.half_width().expect("Integer type too small to split"),
@@ -68,6 +69,7 @@ impl ValueConversion {
     }
 
     /// Is this a split conversion that results in two arguments?
+    #[allow(dead_code)] // TODO keep this until the new backend is finished.
     pub fn is_split(self) -> bool {
         match self {
             Self::IntSplit | Self::VectorSplit => true,
@@ -87,6 +89,7 @@ pub trait ArgAssigner {
 /// Legalize the arguments in `args` using the given argument assigner.
 ///
 /// This function can be used for both arguments and return values.
+#[allow(dead_code)] // TODO keep this until the new backend is finished.
 pub fn legalize_args<AA: ArgAssigner>(args: &[AbiParam], aa: &mut AA) -> Option<Vec<AbiParam>> {
     let mut args = Cow::Borrowed(args);
 
