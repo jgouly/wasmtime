@@ -4,12 +4,10 @@
 #![allow(non_snake_case)]
 
 use crate::ir::condcodes::IntCC;
-//zz use crate::ir::types::*;
 use crate::ir::Inst as IRInst;
-use crate::ir::{Block, InstructionData, Opcode, Type};
+use crate::ir::{InstructionData, Opcode, Type};
 
 use crate::ir::types;
-use crate::ir::types::*;
 
 use crate::machinst::lower::*;
 use crate::machinst::*;
@@ -17,9 +15,7 @@ use crate::machinst::*;
 use crate::isa::x64::inst::*;
 use crate::isa::x64::X64Backend;
 
-use regalloc::{RealReg, Reg, RegClass, VirtualReg, Writable};
-
-use smallvec::SmallVec;
+use regalloc::{Reg, Writable};
 
 //============================================================================
 //

@@ -1,7 +1,6 @@
 //! Implementation of the standard x64 ABI.
 
 #![allow(dead_code)]
-#![allow(non_snake_case)]
 
 use crate::ir;
 use crate::ir::types;
@@ -10,43 +9,47 @@ use crate::ir::StackSlot;
 use crate::ir::Type;
 use crate::isa;
 use crate::isa::x64::inst::*;
-use crate::isa::x64::*;
 use crate::machinst::*;
 
 use alloc::vec::Vec;
 
 use regalloc::{RealReg, Reg, RegClass, Set, SpillSlot, Writable};
 
-// Clone of arm64 version
 #[derive(Clone, Debug)]
 enum ABIArg {
     Reg(RealReg),
     Stack, // TODO
 }
 
-// Clone of arm64 version
 #[derive(Clone, Debug)]
 enum ABIRet {
     Reg(RealReg),
     Mem, // TODO
 }
 
-// Clone of arm64 version
 pub struct X64ABIBody {
     args: Vec<ABIArg>,
     rets: Vec<ABIRet>,
-    stackslots: Vec<usize>,            // offsets to each stackslot
-    stackslots_size: usize,            // total stack size of all stackslots
-    clobbered: Set<Writable<RealReg>>, // clobbered registers, from regalloc.
-    spillslots: Option<usize>,         // total number of spillslots, from regalloc.
-    // Calculated while creating the prologue, and used when creating the
-    // epilogue.  Amount by which RSP is adjusted downwards to allocate the
-    // spill area.
-    spill_area_sizeB: Option<usize>,
+
+    /// Offsets to each stack slot.
+    stack_slots: Vec<usize>,
+
+    /// Total stack size of all the stack slots.
+    stack_slots_size: usize,
+
+    /// Clobbered registers, as indicated by regalloc.
+    clobbered: Set<Writable<RealReg>>,
+
+    /// Total number of spill slots, as indicated by regalloc.
+    num_spill_slots: Option<usize>,
+
+    /// Calculated while creating the prologue, and used when creating the epilogue. Amount by
+    /// which RSP is adjusted downwards to allocate the spill area.
+    spill_area_size_bytes: Option<usize>,
+
     call_conv: isa::CallConv,
 }
 
-// Clone of arm64 version
 fn in_int_reg(ty: types::Type) -> bool {
     match ty {
         types::I8 | types::I16 | types::I32 | types::I64 => true,
@@ -55,7 +58,7 @@ fn in_int_reg(ty: types::Type) -> bool {
     }
 }
 
-fn get_intreg_for_arg_ELF(idx: usize) -> Option<Reg> {
+fn get_intreg_for_arg_systemv(idx: usize) -> Option<Reg> {
     match idx {
         0 => Some(reg_RDI()),
         1 => Some(reg_RSI()),
@@ -67,15 +70,15 @@ fn get_intreg_for_arg_ELF(idx: usize) -> Option<Reg> {
     }
 }
 
-fn get_intreg_for_retval_ELF(idx: usize) -> Option<Reg> {
+fn get_intreg_for_retval_systemv(idx: usize) -> Option<Reg> {
     match idx {
         0 => Some(reg_RAX()),
-        1 => Some(reg_RDX()), // is that correct?
+        1 => Some(reg_RDX()),
         _ => None,
     }
 }
 
-fn is_callee_save_ELF(r: RealReg) -> bool {
+fn is_callee_save_systemv(r: RealReg) -> bool {
     match r.get_class() {
         RegClass::I64 => match r.get_hw_encoding() as u8 {
             ENC_RBX | ENC_RBP | ENC_R12 | ENC_R13 | ENC_R14 | ENC_R15 => true,
@@ -85,10 +88,9 @@ fn is_callee_save_ELF(r: RealReg) -> bool {
     }
 }
 
-// Clone of arm64 version
 fn get_callee_saves(regs: Vec<Writable<RealReg>>) -> Vec<Writable<RealReg>> {
     regs.into_iter()
-        .filter(|r| is_callee_save_ELF(r.to_reg()))
+        .filter(|r| is_callee_save_systemv(r.to_reg()))
         .collect()
 }
 
@@ -104,7 +106,7 @@ impl X64ABIBody {
             match param.purpose {
                 ir::ArgumentPurpose::Normal => {
                     if in_int_reg(param.value_type) {
-                        if let Some(reg) = get_intreg_for_arg_ELF(next_int_arg) {
+                        if let Some(reg) = get_intreg_for_arg_systemv(next_int_arg) {
                             args.push(ABIArg::Reg(reg.to_real_reg()));
                         } else {
                             unimplemented!("passing arg on the stack");
@@ -131,7 +133,7 @@ impl X64ABIBody {
             match ret.purpose {
                 ir::ArgumentPurpose::Normal => {
                     if in_int_reg(ret.value_type) {
-                        if let Some(reg) = get_intreg_for_retval_ELF(next_int_retval) {
+                        if let Some(reg) = get_intreg_for_retval_systemv(next_int_retval) {
                             rets.push(ABIRet::Reg(reg.to_real_reg()));
                         } else {
                             unimplemented!("passing return on the stack");
@@ -150,23 +152,23 @@ impl X64ABIBody {
 
         // Compute stackslot locations and total stackslot size.
         let mut stack_offset: usize = 0;
-        let mut stackslots = vec![];
+        let mut stack_slots = vec![];
         for (stackslot, data) in f.stack_slots.iter() {
             let off = stack_offset;
             stack_offset += data.size as usize;
             stack_offset = (stack_offset + 7) & !7usize;
-            assert_eq!(stackslot.as_u32() as usize, stackslots.len());
-            stackslots.push(off);
+            debug_assert_eq!(stackslot.as_u32() as usize, stack_slots.len());
+            stack_slots.push(off);
         }
 
         Self {
             args,
             rets,
-            stackslots,
-            stackslots_size: stack_offset,
+            stack_slots,
+            stack_slots_size: stack_offset,
             clobbered: Set::empty(),
-            spillslots: None,
-            spill_area_sizeB: None,
+            num_spill_slots: None,
+            spill_area_size_bytes: None,
             call_conv: f.signature.call_conv.clone(),
         }
     }
@@ -252,7 +254,7 @@ impl ABIBody<Inst> for X64ABIBody {
 
     // Clone of arm64
     fn set_num_spillslots(&mut self, slots: usize) {
-        self.spillslots = Some(slots);
+        self.num_spill_slots = Some(slots);
     }
 
     // Clone of arm64
@@ -283,8 +285,8 @@ impl ABIBody<Inst> for X64ABIBody {
     }
 
     fn gen_prologue(&mut self) -> Vec<Inst> {
-        let total_stacksize = self.stackslots_size + 8 * self.spillslots.unwrap();
-        let total_stacksize = (total_stacksize + 15) & !15; // 16-align the stack
+        let total_stacksize = self.stack_slots_size + 8 * self.num_spill_slots.unwrap();
+        let total_stacksize = (total_stacksize + 15) & !15; // 16-align the stack.
 
         let r_rbp = reg_RBP();
         let r_rsp = reg_RSP();
@@ -324,30 +326,30 @@ impl ABIBody<Inst> for X64ABIBody {
         // subtraction, is still 16 aligned.
         //
         // Ultra paranoid approach:
-        let mut spill_area_sizeB = total_stacksize;
+        let mut spill_area_size = total_stacksize;
         match callee_saved_used % 16 {
-            0 => spill_area_sizeB += 0,
-            8 => spill_area_sizeB += 8,
+            0 => spill_area_size += 0,
+            8 => spill_area_size += 8,
             // note that in general we map N to += 16-N
             // Really there should be no other cases, though.
             _ => panic!("gen_prologue(x86): total_stacksize is not 8-aligned"),
         }
-        if spill_area_sizeB > 0x7FFF_FFFF {
+        if spill_area_size > 0x7FFF_FFFF {
             panic!("gen_prologue(x86): total_stacksize >= 2G");
         }
-        if spill_area_sizeB > 0 {
+        if spill_area_size > 0 {
             // FIXME JRS 2020Feb16: handle spill_area_size >= 2G?
             insts.push(i_Alu_RMI_R(
                 true,
                 RMI_R_Op::Sub,
-                ip_RMI_I(spill_area_sizeB as u32),
+                ip_RMI_I(spill_area_size as u32),
                 w_rsp,
             ));
         }
 
         // Stash this value.  We'll need it for the epilogue.
-        debug_assert!(self.spill_area_sizeB.is_none());
-        self.spill_area_sizeB = Some(spill_area_sizeB);
+        debug_assert!(self.spill_area_size_bytes.is_none());
+        self.spill_area_size_bytes = Some(spill_area_size);
 
         insts
     }
@@ -362,13 +364,13 @@ impl ABIBody<Inst> for X64ABIBody {
         // Undo what we did in the prologue.
 
         // Clear the spill area and the 16-alignment padding below it.
-        let spill_area_sizeB = self.spill_area_sizeB.unwrap();
-        if spill_area_sizeB > 0 {
+        let spill_area_size = self.spill_area_size_bytes.unwrap();
+        if spill_area_size > 0 {
             // FIXME JRS 2020Feb16: what if spill_area_size >= 2G?
             insts.push(i_Alu_RMI_R(
                 true,
                 RMI_R_Op::Add,
-                ip_RMI_I(spill_area_sizeB as u32),
+                ip_RMI_I(spill_area_size as u32),
                 w_rsp,
             ));
         }
@@ -392,7 +394,7 @@ impl ABIBody<Inst> for X64ABIBody {
             insts.push(i);
         }
 
-        // Baldrdash has its own preamble.
+        // Baldrdash generates its own preamble.
         if !self.call_conv.extends_baldrdash() {
             // Undo the "traditional" pre-preamble
             // RSP before the call will be 0 % 16.  So here, it is 8 % 16.
@@ -405,7 +407,7 @@ impl ABIBody<Inst> for X64ABIBody {
     }
 
     fn frame_size(&self) -> u32 {
-        self.spill_area_sizeB
+        self.spill_area_size_bytes
             .expect("frame size not computed before prologue generation") as u32
     }
 

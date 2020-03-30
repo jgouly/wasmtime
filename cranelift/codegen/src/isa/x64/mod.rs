@@ -1,9 +1,7 @@
 //! X86_64-bit Instruction Set Architecture.
 
-#![allow(unused_imports)]
 #![allow(dead_code)]
 
-use crate::binemit::{CodeSink, MemoryCodeSink, RelocSink, StackmapSink, TrapSink};
 use crate::ir::Function;
 use crate::isa::Builder as IsaBuilder;
 use crate::isa::TargetIsa;
@@ -15,9 +13,7 @@ use crate::result::CodegenResult;
 use super::super::settings as shared_settings;
 
 use alloc::boxed::Box;
-use alloc::vec::Vec;
 use std::str::FromStr;
-use std::string::String;
 
 use regalloc::RealRegUniverse;
 use target_lexicon::Triple;
