@@ -11,7 +11,8 @@ use crate::machinst::{
     compile, MachBackend, MachCompileResult, ShowWithRRU, TargetIsaAdapter, VCode,
 };
 use crate::result::CodegenResult;
-use crate::settings;
+
+use super::super::settings as shared_settings;
 
 use alloc::boxed::Box;
 use alloc::vec::Vec;
@@ -25,32 +26,33 @@ use target_lexicon::Triple;
 mod abi;
 mod inst;
 mod lower;
+mod settings;
 
 use inst::create_reg_universe;
 
 /// An X64 backend.
 pub struct X64Backend {
-    flags: settings::Flags,
+    shared_flags: shared_settings::Flags,
+    isa_flags: settings::Flags,
 }
 
 impl X64Backend {
-    /// Create a new X64 backend.
-    pub fn new() -> X64Backend {
-        X64Backend {
-            flags: settings::Flags::new(settings::builder()),
-        }
-    }
-
     /// Create a new X64 backend with the given (shared) flags.
-    pub fn new_with_flags(flags: settings::Flags) -> X64Backend {
-        X64Backend { flags }
+    pub fn new_with_flags(
+        isa_flags: settings::Flags,
+        shared_flags: shared_settings::Flags,
+    ) -> Self {
+        Self {
+            isa_flags,
+            shared_flags,
+        }
     }
 
     fn compile_vcode(&self, mut func: Function) -> VCode<inst::Inst> {
         // This performs lowering to VCode, register-allocates the code, computes
         // block layout and finalizes branches. The result is ready for binary emission.
         let abi = Box::new(abi::X64ABIBody::new(&func));
-        compile::compile::<X64Backend>(&mut func, self, abi)
+        compile::compile::<Self>(&mut func, self, abi)
     }
 }
 
@@ -77,8 +79,8 @@ impl MachBackend for X64Backend {
         })
     }
 
-    fn flags(&self) -> &settings::Flags {
-        &self.flags
+    fn flags(&self) -> &shared_settings::Flags {
+        &self.shared_flags
     }
 
     fn name(&self) -> &'static str {
@@ -105,9 +107,10 @@ pub fn isa_builder(triple: Triple) -> IsaBuilder {
 
 fn isa_constructor(
     _: Triple,
-    shared_flags: settings::Flags,
-    _arch_flag_builder: settings::Builder,
+    shared_flags: shared_settings::Flags,
+    arch_flag_builder: shared_settings::Builder,
 ) -> Box<dyn TargetIsa> {
-    let backend = X64Backend::new_with_flags(shared_flags);
+    let isa_flags = settings::Flags::new(&shared_flags, arch_flag_builder);
+    let backend = X64Backend::new_with_flags(isa_flags, shared_flags);
     Box::new(TargetIsaAdapter::new(backend))
 }

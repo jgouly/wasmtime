@@ -1,5 +1,7 @@
 //! x86 Instruction Set Architectures.
 
+#![allow(dead_code)] // Temporary, while the new x86 backend is being ported to x64.
+
 mod abi;
 mod binemit;
 mod enc_tables;
