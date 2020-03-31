@@ -1840,11 +1840,45 @@ fn inst_trapcode(data: &InstructionData) -> Option<TrapCode> {
     }
 }
 
+/// Checks for an instance of `op` feeding the given input. Marks as merged (decrementing refcount) if so.
 fn maybe_input_insn<C: LowerCtx<Inst>>(c: &mut C, input: InsnInput, op: Opcode) -> Option<IRInst> {
     if let InsnInputSource::Output(out) = input_source(c, input) {
         let data = c.data(out.insn);
         if data.opcode() == op {
+            c.merged(out.insn);
             return Some(out.insn);
+        }
+    }
+    None
+}
+
+/// Checks for an instance of `op` feeding the given input, possibly via a conversion `conv` (e.g.,
+/// Bint or a bitcast). Marks one or both as merged if so, as appropriate.
+///
+/// FIXME cfallin 2020-03-30: this is really ugly. Factor out tree-matching stuff and make it
+/// a bit more generic.
+fn maybe_input_insn_via_conv<C: LowerCtx<Inst>>(
+    c: &mut C,
+    input: InsnInput,
+    op: Opcode,
+    conv: Opcode,
+) -> Option<IRInst> {
+    if let Some(ret) = maybe_input_insn(c, input, op) {
+        return Some(ret);
+    }
+
+    if let InsnInputSource::Output(out) = input_source(c, input) {
+        let data = c.data(out.insn);
+        if data.opcode() == conv {
+            let conv_insn = out.insn;
+            let conv_input = InsnInput {
+                insn: conv_insn,
+                input: 0,
+            };
+            if let Some(inner) = maybe_input_insn(c, conv_input, op) {
+                c.merged(conv_insn);
+                return Some(inner);
+            }
         }
     }
     None
@@ -1874,7 +1908,6 @@ fn lower_icmp_or_ifcmp_to_flags<C: LowerCtx<Inst>>(ctx: &mut C, insn: IRInst, is
     let rm = input_to_rse_imm12(ctx, inputs[1], narrow_mode);
     let alu_op = choose_32_64(ty, ALUOp::SubS32, ALUOp::SubS64);
     let rd = writable_zero_reg();
-    ctx.merged(insn);
     ctx.emit(alu_inst_imm12(alu_op, rd, rn, rm));
 }
 
@@ -1926,7 +1959,9 @@ impl LowerBackend for Arm64Backend {
                         insn: branches[0],
                         input: 0,
                     };
-                    if let Some(icmp_insn) = maybe_input_insn(ctx, flag_input, Opcode::Icmp) {
+                    if let Some(icmp_insn) =
+                        maybe_input_insn_via_conv(ctx, flag_input, Opcode::Icmp, Opcode::Bint)
+                    {
                         let condcode = inst_condcode(ctx.data(icmp_insn)).unwrap();
                         let cond = lower_condcode(condcode);
                         let is_signed = condcode_is_signed(condcode);
