@@ -1360,7 +1360,7 @@ fn lower_insn_to_regs<C: LowerCtx<Inst>>(ctx: &mut C, insn: IRInst) {
             // Verification ensures that the input is always a
             // single-def ifcmp.
             let ifcmp_insn = maybe_input_insn(ctx, inputs[0], Opcode::Ifcmp).unwrap();
-            lower_ifcmp_to_flags(ctx, ifcmp_insn, is_signed);
+            lower_icmp_or_ifcmp_to_flags(ctx, ifcmp_insn, is_signed);
             let rd = output_to_reg(ctx, outputs[0]);
             let rn = input_to_reg(ctx, inputs[1], NarrowValueMode::None);
             let rm = input_to_reg(ctx, inputs[2], NarrowValueMode::None);
@@ -1403,7 +1403,7 @@ fn lower_insn_to_regs<C: LowerCtx<Inst>>(ctx: &mut C, insn: IRInst) {
             // Verification ensures that the input is always a
             // single-def ifcmp.
             let ifcmp_insn = maybe_input_insn(ctx, inputs[0], Opcode::Ifcmp).unwrap();
-            lower_ifcmp_to_flags(ctx, ifcmp_insn, is_signed);
+            lower_icmp_or_ifcmp_to_flags(ctx, ifcmp_insn, is_signed);
             let rd = output_to_reg(ctx, outputs[0]);
             ctx.emit(Inst::CSet { rd, cond });
         }
@@ -1516,7 +1516,7 @@ fn lower_insn_to_regs<C: LowerCtx<Inst>>(ctx: &mut C, insn: IRInst) {
                 // Verification ensures that the input is always a
                 // single-def ifcmp.
                 let ifcmp_insn = maybe_input_insn(ctx, inputs[0], Opcode::Ifcmp).unwrap();
-                lower_ifcmp_to_flags(ctx, ifcmp_insn, is_signed);
+                lower_icmp_or_ifcmp_to_flags(ctx, ifcmp_insn, is_signed);
 
                 // Branch around the break instruction with inverted cond. Go straight
                 // to lowered one-target form; this is logically part of a single-in
@@ -1850,9 +1850,8 @@ fn maybe_input_insn<C: LowerCtx<Inst>>(c: &mut C, input: InsnInput, op: Opcode) 
     None
 }
 
-fn lower_ifcmp_to_flags<C: LowerCtx<Inst>>(ctx: &mut C, ifcmp_insn: IRInst, is_signed: bool) {
-    // Get the condcode and the args, and treat this like a BrIcmp.
-    let ty = ctx.input_ty(ifcmp_insn, 0);
+fn lower_icmp_or_ifcmp_to_flags<C: LowerCtx<Inst>>(ctx: &mut C, insn: IRInst, is_signed: bool) {
+    let ty = ctx.input_ty(insn, 0);
     let bits = ty_bits(ty);
     let narrow_mode = match (bits <= 32, is_signed) {
         (true, true) => NarrowValueMode::SignExtend32,
@@ -1860,22 +1859,22 @@ fn lower_ifcmp_to_flags<C: LowerCtx<Inst>>(ctx: &mut C, ifcmp_insn: IRInst, is_s
         (false, true) => NarrowValueMode::SignExtend64,
         (false, false) => NarrowValueMode::ZeroExtend64,
     };
-    let ifcmp_inputs = [
+    let inputs = [
         InsnInput {
-            insn: ifcmp_insn,
+            insn: insn,
             input: 0,
         },
         InsnInput {
-            insn: ifcmp_insn,
+            insn: insn,
             input: 1,
         },
     ];
-    let ty = ctx.input_ty(ifcmp_insn, 0);
-    let rn = input_to_reg(ctx, ifcmp_inputs[0], narrow_mode);
-    let rm = input_to_rse_imm12(ctx, ifcmp_inputs[1], narrow_mode);
+    let ty = ctx.input_ty(insn, 0);
+    let rn = input_to_reg(ctx, inputs[0], narrow_mode);
+    let rm = input_to_rse_imm12(ctx, inputs[1], narrow_mode);
     let alu_op = choose_32_64(ty, ALUOp::SubS32, ALUOp::SubS64);
     let rd = writable_zero_reg();
-    ctx.merged(ifcmp_insn);
+    ctx.merged(insn);
     ctx.emit(alu_inst_imm12(alu_op, rd, rn, rm));
 }
 
@@ -1923,24 +1922,43 @@ impl LowerBackend for Arm64Backend {
             };
             match op0 {
                 Opcode::Brz | Opcode::Brnz => {
-                    let rt = input_to_reg(
-                        ctx,
-                        InsnInput {
-                            insn: branches[0],
-                            input: 0,
-                        },
-                        NarrowValueMode::ZeroExtend64,
-                    );
-                    let kind = match op0 {
-                        Opcode::Brz => CondBrKind::Zero(rt),
-                        Opcode::Brnz => CondBrKind::NotZero(rt),
-                        _ => unreachable!(),
+                    let flag_input = InsnInput {
+                        insn: branches[0],
+                        input: 0,
                     };
-                    ctx.emit(Inst::CondBr {
-                        taken,
-                        not_taken,
-                        kind,
-                    });
+                    if let Some(icmp_insn) = maybe_input_insn(ctx, flag_input, Opcode::Icmp) {
+                        let condcode = inst_condcode(ctx.data(icmp_insn)).unwrap();
+                        let cond = lower_condcode(condcode);
+                        let is_signed = condcode_is_signed(condcode);
+                        let negated = op0 == Opcode::Brz;
+                        let cond = if negated { cond.invert() } else { cond };
+
+                        lower_icmp_or_ifcmp_to_flags(ctx, icmp_insn, is_signed);
+                        ctx.emit(Inst::CondBr {
+                            taken,
+                            not_taken,
+                            kind: CondBrKind::Cond(cond),
+                        });
+                    } else {
+                        let rt = input_to_reg(
+                            ctx,
+                            InsnInput {
+                                insn: branches[0],
+                                input: 0,
+                            },
+                            NarrowValueMode::ZeroExtend64,
+                        );
+                        let kind = match op0 {
+                            Opcode::Brz => CondBrKind::Zero(rt),
+                            Opcode::Brnz => CondBrKind::NotZero(rt),
+                            _ => unreachable!(),
+                        };
+                        ctx.emit(Inst::CondBr {
+                            taken,
+                            not_taken,
+                            kind,
+                        });
+                    }
                 }
                 Opcode::BrIcmp => {
                     let condcode = inst_condcode(ctx.data(branches[0])).unwrap();
@@ -1990,7 +2008,7 @@ impl LowerBackend for Arm64Backend {
                         input: 0,
                     };
                     if let Some(ifcmp_insn) = maybe_input_insn(ctx, flag_input, Opcode::Ifcmp) {
-                        lower_ifcmp_to_flags(ctx, ifcmp_insn, is_signed);
+                        lower_icmp_or_ifcmp_to_flags(ctx, ifcmp_insn, is_signed);
                         ctx.emit(Inst::CondBr {
                             taken,
                             not_taken,
