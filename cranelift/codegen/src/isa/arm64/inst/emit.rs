@@ -75,7 +75,7 @@ pub fn memlabel_finalize<O: MachSectionOutput>(
 /// Memory addressing mode finalization: convert "special" modes (e.g.,
 /// generic arbitrary stack offset) into real addressing modes, possibly by
 /// emitting some helper instructions that come immediately before the use
-/// of this amod.
+/// of this amode.
 pub fn mem_finalize<O: MachSectionOutput>(
     insn_off: CodeOffset,
     mem: &MemArg,
@@ -94,18 +94,7 @@ pub fn mem_finalize<O: MachSectionOutput>(
                 (vec![], mem)
             } else {
                 let tmp = writable_spilltmp_reg();
-                let const_data = u64_constant(off as u64);
-                let (_, const_mem) = mem_finalize(
-                    insn_off,
-                    &MemArg::label(MemLabel::ConstantData(const_data)),
-                    consts,
-                    jt_offsets,
-                );
-                let const_inst = Inst::ULoad64 {
-                    rd: tmp,
-                    mem: const_mem,
-                    is_reload: None,
-                };
+                let const_inst = Inst::load_constant(tmp, off as u64);
                 let add_inst = Inst::AluRRR {
                     alu_op: ALUOp::Add64,
                     rd: tmp,
@@ -2107,8 +2096,35 @@ mod test {
                 mem: MemArg::FPOffset(32768),
                 is_reload: None,
             },
-            "8F000058EF011D8BE10140F9000000000080000000000000",
-            "ldr x15, pc+0 // Constant data: ConstantData([0, 128, 0, 0, 0, 0, 0, 0]) ; add x15, x15, fp ; ldr x1, [x15]",
+            "0F0090D2EF011D8BE10140F9",
+            "movz x15, #32768 ; add x15, x15, fp ; ldr x1, [x15]",
+        ));
+        insns.push((
+            Inst::ULoad64 {
+                rd: writable_xreg(1),
+                mem: MemArg::FPOffset(-32768),
+                is_reload: None,
+            },
+            "EFFF8F92EF011D8BE10140F9",
+            "movn x15, #32767 ; add x15, x15, fp ; ldr x1, [x15]",
+        ));
+        insns.push((
+            Inst::ULoad64 {
+                rd: writable_xreg(1),
+                mem: MemArg::FPOffset(1048576), // 2^20
+                is_reload: None,
+            },
+            "0F02A0D2EF011D8BE10140F9",
+            "movz x15, #1048576 ; add x15, x15, fp ; ldr x1, [x15]",
+        ));
+        insns.push((
+            Inst::ULoad64 {
+                rd: writable_xreg(1),
+                mem: MemArg::FPOffset(1048576 + 1), // 2^20 + 1
+                is_reload: None,
+            },
+            "8F000058EF011D8BE10140F9000000000100100000000000",
+            "ldr x15, pc+0 // Constant data: ConstantData([1, 0, 16, 0, 0, 0, 0, 0]) ; add x15, x15, fp ; ldr x1, [x15]",
         ));
 
         insns.push((

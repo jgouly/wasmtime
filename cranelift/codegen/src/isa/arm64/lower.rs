@@ -602,29 +602,7 @@ fn lower_address<C: LowerCtx<Inst>>(
 }
 
 fn lower_constant<C: LowerCtx<Inst>>(ctx: &mut C, rd: Writable<Reg>, value: u64) {
-    if let Some(imm) = MoveWideConst::maybe_from_u64(value) {
-        // 16-bit immediate (shifted by 0, 16, 32 or 48 bits) in MOVZ
-        ctx.emit(Inst::MovZ { rd, imm });
-    } else if let Some(imm) = MoveWideConst::maybe_from_u64(!value) {
-        // 16-bit immediate (shifted by 0, 16, 32 or 48 bits) in MOVN
-        ctx.emit(Inst::MovN { rd, imm });
-    } else if let Some(imml) = ImmLogic::maybe_from_u64(value) {
-        // Weird logical-instruction immediate in ORI using zero register
-        ctx.emit(Inst::AluRRImmLogic {
-            alu_op: ALUOp::Orr64,
-            rd,
-            rn: zero_reg(),
-            imml,
-        });
-    } else {
-        // 64-bit constant in constant pool
-        let const_data = u64_constant(value);
-        ctx.emit(Inst::ULoad64 {
-            rd,
-            mem: MemArg::label(MemLabel::ConstantData(const_data)),
-            is_reload: None,
-        });
-    }
+    ctx.emit(Inst::load_constant(rd, value));
 }
 
 fn lower_condcode(cc: IntCC) -> Cond {

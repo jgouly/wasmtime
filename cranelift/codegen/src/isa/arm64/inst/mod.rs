@@ -391,6 +391,34 @@ impl Inst {
             rm: from_reg,
         }
     }
+
+    /// Create an instruction that loads a constant, using one of serveral options (MOVZ, MOVN,
+    /// logical immediate, or constant pool).
+    pub fn load_constant(rd: Writable<Reg>, value: u64) -> Inst {
+        if let Some(imm) = MoveWideConst::maybe_from_u64(value) {
+            // 16-bit immediate (shifted by 0, 16, 32 or 48 bits) in MOVZ
+            Inst::MovZ { rd, imm }
+        } else if let Some(imm) = MoveWideConst::maybe_from_u64(!value) {
+            // 16-bit immediate (shifted by 0, 16, 32 or 48 bits) in MOVN
+            Inst::MovN { rd, imm }
+        } else if let Some(imml) = ImmLogic::maybe_from_u64(value) {
+            // Weird logical-instruction immediate in ORI using zero register
+            Inst::AluRRImmLogic {
+                alu_op: ALUOp::Orr64,
+                rd,
+                rn: zero_reg(),
+                imml,
+            }
+        } else {
+            // 64-bit constant in constant pool
+            let const_data = u64_constant(value);
+            Inst::ULoad64 {
+                rd,
+                mem: MemArg::label(MemLabel::ConstantData(const_data)),
+                is_reload: None,
+            }
+        }
+    }
 }
 
 //=============================================================================
