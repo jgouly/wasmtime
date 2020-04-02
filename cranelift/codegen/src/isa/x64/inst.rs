@@ -2582,7 +2582,7 @@ impl MachInst for Inst {
 }
 
 impl<O: MachSectionOutput> MachInstEmit<O> for Inst {
-    fn emit(&self, sink: &mut O, _consts: &mut O, _jt_offsets: &[CodeOffset]) {
+    fn emit(&self, sink: &mut O, _consts: &mut O) {
         x64_emit(self, sink);
     }
 }
@@ -4711,7 +4711,7 @@ fn test_x64_insn_encoding_and_printing() {
         let (text_size, rodata_size) = {
             let mut code_sec = MachSectionSize::new(0);
             let mut const_sec = MachSectionSize::new(0);
-            insn.emit(&mut code_sec, &mut const_sec, &[]);
+            insn.emit(&mut code_sec, &mut const_sec);
             (code_sec.size(), const_sec.size())
         };
 
@@ -4720,7 +4720,7 @@ fn test_x64_insn_encoding_and_printing() {
         sections.add_section(0, text_size);
         sections.add_section(Inst::align_constant_pool(text_size), rodata_size);
         let (code_sec, const_sec) = sections.two_sections(0, 1);
-        insn.emit(code_sec, const_sec, &[]);
+        insn.emit(code_sec, const_sec);
         sections.emit(&mut sink);
         let actual_encoding = &sink.stringify();
         assert_eq!(expected_encoding, actual_encoding);

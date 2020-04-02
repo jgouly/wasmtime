@@ -2083,16 +2083,11 @@ impl LowerBackend for Arm64Backend {
                     //
                     //   subs idx, #jt_size
                     //   b.hs default
-                    //   adr vTmp1, JT_addr@pcrel
-                    //   ldr vTmp1, [vTmp1, idx, lsl #2]
-                    //   adr vTmp2, start_of_code@pcrel
+                    //   adr vTmp1, PC+16
+                    //   ldr vTmp2, [vTmp1, idx, lsl #2]
                     //   add vTmp2, vTmp2, vTmp1
                     //   br vTmp2
-                    let jt = match ctx.data(branches[0]) {
-                        &InstructionData::BranchTable { table, .. } => table,
-                        _ => panic!("Unexpected instruction format for BrTable op"),
-                    };
-
+                    //   [jumptable offsets relative to JT base]
                     let jt_size = targets.len() - 1;
                     assert!(jt_size <= std::u32::MAX as usize);
                     let ridx = input_to_reg(
@@ -2124,46 +2119,39 @@ impl LowerBackend for Arm64Backend {
                             rm: rtmp1.to_reg(),
                         });
                     }
+                    let default_target = BranchTarget::Block(targets[0]);
                     ctx.emit(Inst::CondBrLowered {
                         kind: CondBrKind::Cond(Cond::Hs), // unsigned >=
-                        target: BranchTarget::Block(targets[0]),
+                        target: default_target.clone(),
                     });
 
-                    // Load address of jump table
-                    ctx.emit(Inst::Adr {
-                        rd: rtmp1,
-                        label: MemLabel::JumpTable(jt),
-                    });
-                    // Load value out of jump table
-                    ctx.emit(Inst::ULoad32 {
-                        rd: rtmp1,
-                        mem: MemArg::reg_reg_scaled(rtmp1.to_reg(), ridx, I32),
-                    });
-                    // Get base of code segment (using PC-rel reference)
-                    ctx.emit(Inst::Adr {
-                        rd: rtmp2,
-                        label: MemLabel::CodeOffset(0),
-                    });
-                    // Add base to jump-table-sourced block offset
-                    ctx.emit(Inst::AluRRR {
-                        alu_op: ALUOp::Add64,
-                        rd: rtmp2,
-                        rn: rtmp1.to_reg(),
-                        rm: rtmp2.to_reg(),
-                    });
-                    // Jump to it!
-                    // N.B.: `targets` is used only for the CFG-tracking machinery
-                    // in the VCode container; the jumptable is encoded separately.
-                    // Hence, we *include* the default target here as a possible target,
-                    // even though it would be reached by the bounds-check branch
-                    // branch above. From the point of view of the rest of the pipeline,
-                    // this whole sequence is one open-coded black-box; sinking the
-                    // edge origin point to here should not change any other
-                    // behavior.
-                    let jt_targets: Vec<BlockIndex> = targets.iter().cloned().collect();
-                    ctx.emit(Inst::IndirectBr {
-                        rn: rtmp2.to_reg(),
+                    // Emit the compound instruction that does:
+                    //
+                    // adr rA, jt
+                    // ldrsw rB, [rA, rIndex, LSL 2]
+                    // add rA, rA, rB
+                    // br rA
+                    // [jt entries]
+                    //
+                    // This must be *one* instruction in the vcode because
+                    // we cannot allow regalloc to insert any spills/fills
+                    // in the middle of the sequence; otherwise, the ADR's
+                    // PC-rel offset to the jumptable would be incorrect.
+                    // (The alternative is to introduce a relocation pass
+                    // for inlined jumptables, which is much worse, IMHO.)
+
+                    let jt_targets: Vec<BranchTarget> = targets
+                        .iter()
+                        .skip(1)
+                        .map(|bix| BranchTarget::Block(*bix))
+                        .collect();
+                    let targets_for_term: Vec<BlockIndex> = targets.to_vec();
+                    ctx.emit(Inst::JTSequence {
+                        ridx,
+                        rtmp1,
+                        rtmp2,
                         targets: jt_targets,
+                        targets_for_term,
                     });
                 }
 

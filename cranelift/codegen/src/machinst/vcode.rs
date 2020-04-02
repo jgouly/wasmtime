@@ -99,24 +99,6 @@ pub struct VCode<I: VCodeInst> {
     /// Size of constant pool.
     constants_size: CodeOffset,
 
-    /// Start of the jumptable.
-    jt_start: CodeOffset,
-
-    /// Size of the jumptable.
-    jt_size: CodeOffset,
-
-    /// Map from jump table to index range in the jump-table array.
-    jt_indices: SecondaryMap<ir::JumpTable, (usize, usize)>,
-
-    /// Number of jump tables.
-    jt_count: usize,
-
-    /// Offsets of each jump table relative to the start of code.
-    jt_offsets: Vec<CodeOffset>,
-
-    /// Jump-table entries.
-    jt_entries: Vec<BlockIndex>,
-
     /// ABI object.
     abi: Box<dyn ABIBody<I>>,
 }
@@ -253,20 +235,6 @@ impl<I: VCodeInst> VCodeBuilder<I> {
         self.ir_inst_insns.push(insn);
     }
 
-    /// Add a new jump table to the VCode, with the given IR-level block
-    /// references as entries.
-    pub fn add_jt(&mut self, jt: ir::JumpTable, entries: &[ir::Block]) {
-        debug!("jumptable {}: entries {:?}", jt, entries);
-        let start_index = self.vcode.jt_entries.len();
-        for entry in entries {
-            let block = self.bb_to_bindex(*entry);
-            self.vcode.jt_entries.push(block);
-        }
-        let end_index = self.vcode.jt_entries.len();
-        self.vcode.jt_indices[jt] = (start_index, end_index);
-        self.vcode.jt_count += 1;
-    }
-
     /// Build the final VCode.
     pub fn build(self) -> VCode<I> {
         assert!(self.ir_inst_insns.is_empty());
@@ -337,12 +305,6 @@ impl<I: VCodeInst> VCode<I> {
             code_size: 0,
             constants_start: 0,
             constants_size: 0,
-            jt_start: 0,
-            jt_size: 0,
-            jt_indices: SecondaryMap::with_default((0, 0)),
-            jt_count: 0,
-            jt_offsets: vec![],
-            jt_entries: vec![],
             abi,
         }
     }
@@ -463,14 +425,14 @@ impl<I: VCodeInst> VCode<I> {
                         refcounts[bix1 as usize] += 1;
                         refcounts[bix2 as usize] += 1;
                     }
+                    MachTerminator::Indirect(blocks) => {
+                        for block in blocks {
+                            refcounts[*block as usize] += 1;
+                        }
+                    }
                     _ => {}
                 }
             }
-        }
-
-        for jt_entry in &mut self.jt_entries {
-            *jt_entry = block_rewrites[*jt_entry as usize];
-            refcounts[*jt_entry as usize] += 1;
         }
 
         let deleted: Vec<bool> = refcounts.iter().map(|r| *r == 0).collect();
@@ -519,17 +481,12 @@ impl<I: VCodeInst> VCode<I> {
         let mut code_section = MachSectionSize::new(0);
         let mut const_section = MachSectionSize::new(0);
         let mut block_offsets = vec![0; self.num_blocks()];
-        self.jt_offsets = vec![0; self.jt_count];
         for block in &self.final_block_order {
             code_section.offset = I::align_basic_block(code_section.offset);
             block_offsets[*block as usize] = code_section.offset;
             let (start, end) = self.block_ranges[*block as usize];
             for iix in start..end {
-                self.insts[iix as usize].emit(
-                    &mut code_section,
-                    &mut const_section,
-                    &self.jt_offsets[..],
-                );
+                self.insts[iix as usize].emit(&mut code_section, &mut const_section);
             }
         }
 
@@ -538,15 +495,6 @@ impl<I: VCodeInst> VCode<I> {
         self.code_size = code_section.size();
         self.constants_start = I::align_constant_pool(self.code_size);
         self.constants_size = const_section.size();
-        self.jt_start = I::align_jumptable(self.constants_start + self.constants_size);
-        self.jt_size = self.jt_entries.len() as CodeOffset * I::jt_entry_size();
-
-        // Update jumptable offsets vec passed to inst emission.
-        let mut jt_off = 0;
-        for (jt, &(start_index, end_index)) in self.jt_indices.iter() {
-            self.jt_offsets[jt.index()] = self.jt_start + jt_off;
-            jt_off += I::jt_entry_size() * (end_index - start_index) as CodeOffset;
-        }
 
         // Update branches with known block offsets. This looks like the
         // traversal above, but (i) does not update block_offsets, rather uses
@@ -560,11 +508,7 @@ impl<I: VCodeInst> VCode<I> {
             for iix in start..end {
                 self.insts[iix as usize]
                     .with_block_offsets(code_section.offset, &self.final_block_offsets[..]);
-                self.insts[iix as usize].emit(
-                    &mut code_section,
-                    &mut const_section,
-                    &self.jt_offsets[..],
-                );
+                self.insts[iix as usize].emit(&mut code_section, &mut const_section);
             }
         }
     }
@@ -584,27 +528,13 @@ impl<I: VCodeInst> VCode<I> {
             while new_offset > code_section.cur_offset_from_start() {
                 // Pad with NOPs up to the aligned block offset.
                 let nop = I::gen_nop((new_offset - code_section.cur_offset_from_start()) as usize);
-                nop.emit(code_section, const_section, &self.jt_offsets[..]);
+                nop.emit(code_section, const_section);
             }
             assert_eq!(code_section.cur_offset_from_start(), new_offset);
 
             let (start, end) = self.block_ranges[*block as usize];
             for iix in start..end {
-                self.insts[iix as usize].emit(code_section, const_section, &self.jt_offsets[..]);
-            }
-        }
-
-        // Emit the jumptable. The jumptable is a stored as vector of offsets
-        // from the start of the code section.
-        let jt_idx = sections.add_section(self.jt_start, self.jt_size);
-        let jt_section = sections.get_section(jt_idx);
-
-        for entry in &self.jt_entries {
-            let block_offset = self.final_block_offsets[*entry as usize];
-            match I::jt_entry_size() {
-                4 => jt_section.put4(block_offset),
-                8 => jt_section.put8(block_offset as u64),
-                _ => panic!("Unsupported jumptable entry size (not 32 or 64 bits)"),
+                self.insts[iix as usize].emit(code_section, const_section);
             }
         }
 

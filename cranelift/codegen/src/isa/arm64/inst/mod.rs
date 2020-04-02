@@ -373,6 +373,22 @@ pub enum Inst {
     /// Load the address (using a PC-relative offset) of a MemLabel, using the
     /// `ADR` instruction.
     Adr { rd: Writable<Reg>, label: MemLabel },
+
+    /// Raw 32-bit word, used for inline constants and jump-table entries.
+    Word4 { data: u32 },
+
+    /// Raw 64-bit word, used for inline constants.
+    Word8 { data: u64 },
+
+    /// Jump-table sequence, as one compound instruction (see note in lower.rs
+    /// for rationale).
+    JTSequence {
+        targets: Vec<BranchTarget>,
+        targets_for_term: Vec<BlockIndex>, // needed for MachTerminator.
+        ridx: Reg,
+        rtmp1: Writable<Reg>,
+        rtmp2: Writable<Reg>,
+    },
 }
 
 impl Inst {
@@ -610,6 +626,14 @@ fn arm64_get_regs(inst: &Inst) -> InstRegUses {
         &Inst::Brk { .. } => {}
         &Inst::Adr { rd, .. } => {
             iru.defined.insert(rd);
+        }
+        &Inst::Word4 { .. } | &Inst::Word8 { .. } => {}
+        &Inst::JTSequence {
+            ridx, rtmp1, rtmp2, ..
+        } => {
+            iru.used.insert(ridx);
+            iru.defined.insert(rtmp1);
+            iru.defined.insert(rtmp2);
         }
     }
 
@@ -947,6 +971,21 @@ fn arm64_map_regs(
             rd: map_wr(d, rd),
             label: label.clone(),
         },
+        &mut Inst::Word4 { data } => Inst::Word4 { data },
+        &mut Inst::Word8 { data } => Inst::Word8 { data },
+        &mut Inst::JTSequence {
+            ridx,
+            rtmp1,
+            rtmp2,
+            ref targets,
+            ref targets_for_term,
+        } => Inst::JTSequence {
+            targets: targets.clone(),
+            targets_for_term: targets_for_term.clone(),
+            ridx: map(u, ridx),
+            rtmp1: map_wr(d, rtmp1),
+            rtmp2: map_wr(d, rtmp2),
+        },
     };
     *inst = newval;
 }
@@ -1007,8 +1046,9 @@ impl MachInst for Inst {
                 not_taken.as_block_index().unwrap(),
             ),
             &Inst::CondBrLowered { .. } => {
-                // This is used prior to branch finalization when we must have branches
-                // within an open-coded sequence. From the point of view of CFG analysis,
+                // When this is used prior to branch finalization for branches
+                // within an open-coded sequence, i.e. with ResolvedOffsets,
+                // do not consider it a terminator. From the point of view of CFG analysis,
                 // it is part of a black-box single-in single-out region, hence is not
                 // denoted a terminator.
                 MachTerminator::None
@@ -1017,6 +1057,10 @@ impl MachInst for Inst {
                 panic!("is_term() called after lowering branches");
             }
             &Inst::IndirectBr { ref targets, .. } => MachTerminator::Indirect(&targets[..]),
+            &Inst::JTSequence {
+                ref targets_for_term,
+                ..
+            } => MachTerminator::Indirect(&targets_for_term[..]),
             _ => MachTerminator::None,
         }
     }
@@ -1134,6 +1178,14 @@ impl MachInst for Inst {
             &mut Inst::Jump { ref mut dest } => {
                 dest.lower(targets, my_offset);
             }
+            &mut Inst::JTSequence {
+                targets: ref mut t, ..
+            } => {
+                for target in t {
+                    // offset+20: jumptable is 20 bytes into compound sequence.
+                    target.lower(targets, my_offset + 20);
+                }
+            }
             _ => {}
         }
     }
@@ -1150,9 +1202,8 @@ fn mem_finalize_for_show<O: MachSectionOutput>(
     mem: &MemArg,
     mb_rru: Option<&RealRegUniverse>,
     consts: &mut O,
-    jt_offsets: &[CodeOffset],
 ) -> (String, MemArg) {
-    let (mem_insts, mem) = mem_finalize(0, mem, consts, jt_offsets);
+    let (mem_insts, mem) = mem_finalize(0, mem, consts);
     let mut mem_str = mem_insts
         .into_iter()
         .map(|inst| inst.show_rru(mb_rru))
@@ -1168,7 +1219,7 @@ fn mem_finalize_for_show<O: MachSectionOutput>(
 impl ShowWithRRU for Inst {
     fn show_rru(&self, mb_rru: Option<&RealRegUniverse>) -> String {
         let mut const_section = MachSectionSize::new(0);
-        self.show_rru_with_constsec(mb_rru, &mut const_section, &[])
+        self.show_rru_with_constsec(mb_rru, &mut const_section)
     }
 }
 
@@ -1178,7 +1229,6 @@ impl Inst {
         &self,
         mb_rru: Option<&RealRegUniverse>,
         consts: &mut O,
-        jt_offsets: &[CodeOffset],
     ) -> String {
         fn op_is32(alu_op: ALUOp) -> (&'static str, bool) {
             match alu_op {
@@ -1336,7 +1386,7 @@ impl Inst {
             | &Inst::ULoad32 { rd, ref mem }
             | &Inst::SLoad32 { rd, ref mem }
             | &Inst::ULoad64 { rd, ref mem, .. } => {
-                let (mem_str, mem) = mem_finalize_for_show(mem, mb_rru, consts, jt_offsets);
+                let (mem_str, mem) = mem_finalize_for_show(mem, mb_rru, consts);
 
                 let is_unscaled = match &mem {
                     &MemArg::Unscaled(..) => true,
@@ -1367,7 +1417,7 @@ impl Inst {
             | &Inst::Store16 { rd, ref mem }
             | &Inst::Store32 { rd, ref mem }
             | &Inst::Store64 { rd, ref mem, .. } => {
-                let (mem_str, mem) = mem_finalize_for_show(mem, mb_rru, consts, jt_offsets);
+                let (mem_str, mem) = mem_finalize_for_show(mem, mb_rru, consts);
 
                 let is_unscaled = match &mem {
                     &MemArg::Unscaled(..) => true,
@@ -1604,6 +1654,29 @@ impl Inst {
                 let rd = rd.show_rru(mb_rru);
                 let label = label.show_rru(mb_rru);
                 format!("adr {}, {}", rd, label)
+            }
+            &Inst::Word4 { data } => format!("data.i32 {}", data),
+            &Inst::Word8 { data } => format!("data.i64 {}", data),
+            &Inst::JTSequence {
+                ref targets,
+                ridx,
+                rtmp1,
+                rtmp2,
+                ..
+            } => {
+                let ridx = ridx.show_rru(mb_rru);
+                let rtmp1 = rtmp1.show_rru(mb_rru);
+                let rtmp2 = rtmp2.show_rru(mb_rru);
+                format!(
+                    concat!(
+                        "adr {}, pc+16 ; ",
+                        "ldrsw {}, [{}, {}, LSL 2] ; ",
+                        "add {}, {}, {} ; ",
+                        "br {} ; ",
+                        "jt_entries {:?}"
+                    ),
+                    rtmp1, rtmp2, rtmp1, ridx, rtmp1, rtmp1, rtmp2, rtmp1, targets
+                )
             }
         }
     }

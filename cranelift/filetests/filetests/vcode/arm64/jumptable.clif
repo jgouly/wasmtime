@@ -29,11 +29,7 @@ block5(v5: i64):
 
 ; check:   subs wzr, w0, #3
 ; nextln:   b.hs
-; nextln:   adr x1, jt0
-; nextln:   ldr w1, [x1, x0, lsl #2]
-; nextln:   adr x2, .text + 0
-; nextln:   add x1, x1, x2
-; nextln:   br x1
+; nextln:   adr x2, pc+16 ; ldrsw x1, [x2, x0, LSL 2] ; add x2, x2, x1 ; br x2 ; jt_entries
 
 ; check:   movz x1, #3
 ; nextln:   b

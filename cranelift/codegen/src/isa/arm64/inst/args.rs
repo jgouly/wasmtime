@@ -5,7 +5,7 @@
 
 use crate::binemit::{CodeOffset, CodeSink};
 use crate::ir::constant::{ConstantData, ConstantOffset};
-use crate::ir::{ExternalName, JumpTable, Type};
+use crate::ir::{ExternalName, Type};
 use crate::isa::arm64::inst::*;
 use crate::machinst::*;
 
@@ -128,9 +128,6 @@ pub enum MemLabel {
     /// A value in a constant pool, to be emitted during binemit. This form is
     /// created during isel and is converted during emission to PCRel.
     ConstantData(ConstantData),
-    /// The base address of a jump table. This form is created during isel and
-    /// is converted during emission to PCRel.
-    JumpTable(JumpTable),
     /// An external address constant, placed in the constant pool, to be fixed
     /// up with a relocation. This form (i) is converted into a slot in the
     /// constant pool with a reloc pointing to it, and (ii) becomes a
@@ -332,34 +329,34 @@ impl BranchTarget {
         }
     }
 
-    /// Get the offset as 4-byte words (instructions).
-    pub fn as_offset_words(&self) -> Option<isize> {
+    /// Get the offset as 4-byte words. Returns `0` if not
+    /// yet resolved (in that case, we're only computing
+    /// size and the offset doesn't matter).
+    pub fn as_offset_words(&self) -> isize {
         match self {
-            &BranchTarget::ResolvedOffset(off) => Some(off >> 2),
-            _ => None,
+            &BranchTarget::ResolvedOffset(off) => off >> 2,
+            _ => 0,
         }
     }
 
-    /// Get the offset as a 26-bit offset suitable for a 26-bit jump.
+    /// Get the offset as a 26-bit offset suitable for a 26-bit jump, or `None` if overflow.
     pub fn as_off26(&self) -> Option<u32> {
-        self.as_offset_words().and_then(|i| {
-            if (i < (1 << 25)) && (i >= -(1 << 25)) {
-                Some((i as u32) & ((1 << 26) - 1))
-            } else {
-                None
-            }
-        })
+        let off = self.as_offset_words();
+        if (off < (1 << 25)) && (off >= -(1 << 25)) {
+            Some((off as u32) & ((1 << 26) - 1))
+        } else {
+            None
+        }
     }
 
-    /// Get the offset as a 16-bit offset.
+    /// Get the offset as a 16-bit offset, or `None` if overflow.
     pub fn as_off19(&self) -> Option<u32> {
-        self.as_offset_words().and_then(|i| {
-            if (i < (1 << 18)) && (i >= -(1 << 18)) {
-                Some((i as u32) & ((1 << 19) - 1))
-            } else {
-                None
-            }
-        })
+        let off = self.as_offset_words();
+        if (off < (1 << 18)) && (off >= -(1 << 18)) {
+            Some((off as u32) & ((1 << 19) - 1))
+        } else {
+            None
+        }
     }
 
     /// Map the block index given a transform map.
@@ -405,7 +402,6 @@ impl ShowWithRRU for MemLabel {
                     format!("{}", name)
                 }
             }
-            &MemLabel::JumpTable(jt) => format!("{}", jt),
             &MemLabel::CodeOffset(off) => format!(".text + {}", off),
         }
     }
