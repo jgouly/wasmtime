@@ -1551,10 +1551,10 @@ fn lower_insn_to_regs<C: LowerCtx<Inst>>(ctx: &mut C, insn: IRInst) {
         Opcode::FuncAddr => {
             let rd = output_to_reg(ctx, outputs[0]);
             let extname = ctx.call_target(insn).unwrap().clone();
-            ctx.emit(Inst::ULoad64 {
+            ctx.emit(Inst::LoadExtName {
                 rd,
-                mem: MemArg::Label(MemLabel::ExtName(extname, 0)),
-                is_reload: None,
+                name: extname,
+                offset: 0,
             });
         }
 
@@ -1566,10 +1566,10 @@ fn lower_insn_to_regs<C: LowerCtx<Inst>>(ctx: &mut C, insn: IRInst) {
             let rd = output_to_reg(ctx, outputs[0]);
             let (extname, offset) = ctx.symbol_value(insn).unwrap();
             let extname = extname.clone();
-            ctx.emit(Inst::ULoad64 {
+            ctx.emit(Inst::LoadExtName {
                 rd,
-                mem: MemArg::Label(MemLabel::ExtName(extname, offset)),
-                is_reload: None,
+                name: extname,
+                offset,
             });
         }
 
@@ -1580,10 +1580,10 @@ fn lower_insn_to_regs<C: LowerCtx<Inst>>(ctx: &mut C, insn: IRInst) {
                     let extname = extname.clone();
                     // HACK: get the function address with an Abs8 reloc in teh constant pool.
                     let tmp = ctx.tmp(RegClass::I64, I64);
-                    ctx.emit(Inst::ULoad64 {
+                    ctx.emit(Inst::LoadExtName {
                         rd: tmp,
-                        mem: MemArg::Label(MemLabel::ExtName(extname, 0)),
-                        is_reload: None,
+                        name: extname,
+                        offset: 0,
                     });
                     let sig = ctx.call_sig(insn).unwrap();
                     assert!(inputs.len() == sig.params.len());

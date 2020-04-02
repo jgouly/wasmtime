@@ -5,7 +5,7 @@
 
 use crate::binemit::{CodeOffset, CodeSink};
 use crate::ir::constant::{ConstantData, ConstantOffset};
-use crate::ir::{ExternalName, Type};
+use crate::ir::Type;
 use crate::isa::arm64::inst::*;
 use crate::machinst::*;
 
@@ -121,22 +121,7 @@ pub enum MemLabel {
     /// An address in the code, a constant pool or jumptable, with relative
     /// offset from this instruction. This form must be used at emission time;
     /// see `memlabel_finalize()` for how other forms are lowered to this one.
-    ///
-    /// The second `String` parameter is a comment, used during pretty-printing
-    /// to give some idea of what the referred-to value is.
-    PCRel(i32, String),
-    /// A value in a constant pool, to be emitted during binemit. This form is
-    /// created during isel and is converted during emission to PCRel.
-    ConstantData(ConstantData),
-    /// An external address constant, placed in the constant pool, to be fixed
-    /// up with a relocation. This form (i) is converted into a slot in the
-    /// constant pool with a reloc pointing to it, and (ii) becomes a
-    /// ConstantPoolRel during emission. The isel should use it by emitting a
-    /// Load64(ExtName(..)) to get the *address* of the external symbol, then
-    /// calling/loading/storing that address as appropriate.
-    ExtName(ExternalName, i64),
-    /// Address of a particular code-segment offset.
-    CodeOffset(CodeOffset),
+    PCRel(i32),
 }
 
 /// A memory argument to load/store, encapsulating the possible addressing modes.
@@ -386,23 +371,7 @@ impl ShowWithRRU for ExtendOp {
 impl ShowWithRRU for MemLabel {
     fn show_rru(&self, _mb_rru: Option<&RealRegUniverse>) -> String {
         match self {
-            &MemLabel::PCRel(off, ref comment) => {
-                if comment.len() > 0 {
-                    format!("pc+{} // {}", off, comment)
-                } else {
-                    format!("pc+{}", off)
-                }
-            }
-            // Should be resolved into an offset before we pretty-print.
-            &MemLabel::ConstantData(..) => "!!constant!!".to_string(),
-            &MemLabel::ExtName(ref name, off) => {
-                if off != 0 {
-                    format!("{} + {}", name, off)
-                } else {
-                    format!("{}", name)
-                }
-            }
-            &MemLabel::CodeOffset(off) => format!(".text + {}", off),
+            &MemLabel::PCRel(off) => format!("pc+{}", off),
         }
     }
 }

@@ -389,6 +389,16 @@ pub enum Inst {
         rtmp1: Writable<Reg>,
         rtmp2: Writable<Reg>,
     },
+
+    /// Load an inline constant.
+    LoadConst64 { rd: Writable<Reg>, const_data: u64 },
+
+    /// Load an inline symbol reference.
+    LoadExtName {
+        rd: Writable<Reg>,
+        name: ExternalName,
+        offset: i64,
+    },
 }
 
 impl Inst {
@@ -426,12 +436,21 @@ impl Inst {
                 imml,
             }
         } else {
-            // 64-bit constant in constant pool
-            let const_data = u64_constant(value);
-            Inst::ULoad64 {
+            // 64-bit constant inlined, with a branch over it.
+            // 1. We no longer use a constant pool, because it causes several problems:
+            //    - Requires relocations when the constant pool is moved (e.g., Baldrdash
+            //      inserts epilogue code between the blob of code we return and the
+            //      constant pool).
+            //    - Is not possible to access directly when the size of the function
+            //      body is >1MB, unless we implement longer-form addressing modes
+            //      (and then relaxation to avoid them most of the time).
+            //
+            // 2. This will be replaced soon with a MOVZ/MOVK sequence where it makes
+            //    sense.
+
+            Inst::LoadConst64 {
                 rd,
-                mem: MemArg::label(MemLabel::ConstantData(const_data)),
-                is_reload: None,
+                const_data: value,
             }
         }
     }
@@ -634,6 +653,9 @@ fn arm64_get_regs(inst: &Inst) -> InstRegUses {
             iru.used.insert(ridx);
             iru.defined.insert(rtmp1);
             iru.defined.insert(rtmp2);
+        }
+        &Inst::LoadConst64 { rd, .. } | &Inst::LoadExtName { rd, .. } => {
+            iru.defined.insert(rd);
         }
     }
 
@@ -986,6 +1008,19 @@ fn arm64_map_regs(
             rtmp1: map_wr(d, rtmp1),
             rtmp2: map_wr(d, rtmp2),
         },
+        &mut Inst::LoadConst64 { rd, const_data } => Inst::LoadConst64 {
+            rd: map_wr(d, rd),
+            const_data,
+        },
+        &mut Inst::LoadExtName {
+            rd,
+            ref name,
+            offset,
+        } => Inst::LoadExtName {
+            rd: map_wr(d, rd),
+            name: name.clone(),
+            offset,
+        },
     };
     *inst = newval;
 }
@@ -1198,12 +1233,8 @@ impl MachInst for Inst {
 //=============================================================================
 // Pretty-printing of instructions.
 
-fn mem_finalize_for_show<O: MachSectionOutput>(
-    mem: &MemArg,
-    mb_rru: Option<&RealRegUniverse>,
-    consts: &mut O,
-) -> (String, MemArg) {
-    let (mem_insts, mem) = mem_finalize(0, mem, consts);
+fn mem_finalize_for_show(mem: &MemArg, mb_rru: Option<&RealRegUniverse>) -> (String, MemArg) {
+    let (mem_insts, mem) = mem_finalize(0, mem);
     let mut mem_str = mem_insts
         .into_iter()
         .map(|inst| inst.show_rru(mb_rru))
@@ -1218,18 +1249,6 @@ fn mem_finalize_for_show<O: MachSectionOutput>(
 
 impl ShowWithRRU for Inst {
     fn show_rru(&self, mb_rru: Option<&RealRegUniverse>) -> String {
-        let mut const_section = MachSectionSize::new(0);
-        self.show_rru_with_constsec(mb_rru, &mut const_section)
-    }
-}
-
-impl Inst {
-    /// Show the instruction, also providing constants to a constant sink.
-    pub fn show_rru_with_constsec<O: MachSectionOutput>(
-        &self,
-        mb_rru: Option<&RealRegUniverse>,
-        consts: &mut O,
-    ) -> String {
         fn op_is32(alu_op: ALUOp) -> (&'static str, bool) {
             match alu_op {
                 ALUOp::Add32 => ("add", true),
@@ -1386,7 +1405,7 @@ impl Inst {
             | &Inst::ULoad32 { rd, ref mem }
             | &Inst::SLoad32 { rd, ref mem }
             | &Inst::ULoad64 { rd, ref mem, .. } => {
-                let (mem_str, mem) = mem_finalize_for_show(mem, mb_rru, consts);
+                let (mem_str, mem) = mem_finalize_for_show(mem, mb_rru);
 
                 let is_unscaled = match &mem {
                     &MemArg::Unscaled(..) => true,
@@ -1417,7 +1436,7 @@ impl Inst {
             | &Inst::Store16 { rd, ref mem }
             | &Inst::Store32 { rd, ref mem }
             | &Inst::Store64 { rd, ref mem, .. } => {
-                let (mem_str, mem) = mem_finalize_for_show(mem, mb_rru, consts);
+                let (mem_str, mem) = mem_finalize_for_show(mem, mb_rru);
 
                 let is_unscaled = match &mem {
                     &MemArg::Unscaled(..) => true,
@@ -1677,6 +1696,18 @@ impl Inst {
                     ),
                     rtmp1, rtmp2, rtmp1, ridx, rtmp1, rtmp1, rtmp2, rtmp1, targets
                 )
+            }
+            &Inst::LoadConst64 { rd, const_data } => {
+                let rd = rd.show_rru(mb_rru);
+                format!("ldr {}, 8 ; b 12 ; data {:?}", rd, const_data)
+            }
+            &Inst::LoadExtName {
+                rd,
+                ref name,
+                offset,
+            } => {
+                let rd = rd.show_rru(mb_rru);
+                format!("ldr {}, 8 ; b 12 ; data {:?} + {}", rd, name, offset)
             }
         }
     }

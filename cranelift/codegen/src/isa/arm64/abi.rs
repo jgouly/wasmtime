@@ -422,12 +422,10 @@ impl ABIBody<Inst> for ARM64ABIBody {
                 };
                 insts.push(sub_inst);
             } else {
-                let const_data = u64_constant(total_stacksize as u64);
                 let tmp = writable_spilltmp_reg();
-                let const_inst = Inst::ULoad64 {
+                let const_inst = Inst::LoadConst64 {
                     rd: tmp,
-                    mem: MemArg::label(MemLabel::ConstantData(const_data)),
-                    is_reload: None,
+                    const_data: total_stacksize as u64,
                 };
                 let sub_inst = Inst::AluRRRExtend {
                     alu_op: ALUOp::Sub64,
@@ -622,10 +620,9 @@ fn adjust_stack(amt: u64, is_sub: bool) -> Vec<Inst> {
                 imm12,
             }]
         } else {
-            let const_load = Inst::ULoad64 {
+            let const_load = Inst::LoadConst64 {
                 rd: writable_spilltmp_reg(),
-                mem: MemArg::Label(MemLabel::ConstantData(u64_constant(amt))),
-                is_reload: None,
+                const_data: amt,
             };
             let adj = Inst::AluRRRExtend {
                 alu_op,

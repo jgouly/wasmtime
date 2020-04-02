@@ -209,27 +209,6 @@ pub trait MachInst: Clone + Debug {
     fn align_basic_block(offset: CodeOffset) -> CodeOffset {
         offset
     }
-
-    /// Align the constant pool. By default, align to 16 bytes. Note that this
-    /// alignment must be >= the alignment of any individual constant, so that
-    /// the size of the constant pool can be computed without knowing the size
-    /// of the instruction area (otherwise, alignment requirements might vary
-    /// depending on where the constant pool starts).
-    fn align_constant_pool(offset: CodeOffset) -> CodeOffset {
-        (offset + 15) & !15
-    }
-
-    /// Align the jump-table section. By default, align to 16 bytes.
-    fn align_jumptable(offset: CodeOffset) -> CodeOffset {
-        (offset + 7) & !7
-    }
-
-    /// Size of an individual jumptable entry, in bytes. By default, 32 bits (4
-    /// bytes). Each jumptable entry is emitted by the machine-independent code
-    /// as an offset from the start of the code segment.
-    fn jt_entry_size() -> CodeOffset {
-        4
-    }
 }
 
 /// Describes a block terminator (not call) in the vcode, when its branches
@@ -251,7 +230,7 @@ pub enum MachTerminator<'a> {
 /// A trait describing the ability to encode a MachInst into binary machine code.
 pub trait MachInstEmit<O: MachSectionOutput> {
     /// Emit the instruction.
-    fn emit(&self, code: &mut O, consts: &mut O);
+    fn emit(&self, code: &mut O);
 }
 
 /// The result of a `MachBackend::compile_function()` call. Contains machine

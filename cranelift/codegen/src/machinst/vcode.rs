@@ -93,12 +93,6 @@ pub struct VCode<I: VCodeInst> {
     /// Size of code, accounting for block layout / alignment.
     code_size: CodeOffset,
 
-    /// Start of constant pool.
-    constants_start: CodeOffset,
-
-    /// Size of constant pool.
-    constants_size: CodeOffset,
-
     /// ABI object.
     abi: Box<dyn ABIBody<I>>,
 }
@@ -303,8 +297,6 @@ impl<I: VCodeInst> VCode<I> {
             final_block_order: vec![],
             final_block_offsets: vec![],
             code_size: 0,
-            constants_start: 0,
-            constants_size: 0,
             abi,
         }
     }
@@ -479,36 +471,32 @@ impl<I: VCodeInst> VCode<I> {
 
         // Compute block offsets.
         let mut code_section = MachSectionSize::new(0);
-        let mut const_section = MachSectionSize::new(0);
         let mut block_offsets = vec![0; self.num_blocks()];
         for block in &self.final_block_order {
             code_section.offset = I::align_basic_block(code_section.offset);
             block_offsets[*block as usize] = code_section.offset;
             let (start, end) = self.block_ranges[*block as usize];
             for iix in start..end {
-                self.insts[iix as usize].emit(&mut code_section, &mut const_section);
+                self.insts[iix as usize].emit(&mut code_section);
             }
         }
 
         // We now have the section layout.
         self.final_block_offsets = block_offsets;
         self.code_size = code_section.size();
-        self.constants_start = I::align_constant_pool(self.code_size);
-        self.constants_size = const_section.size();
 
         // Update branches with known block offsets. This looks like the
         // traversal above, but (i) does not update block_offsets, rather uses
         // it (so forward references are now possible), and (ii) mutates the
         // instructions.
         let mut code_section = MachSectionSize::new(0);
-        let mut const_section = MachSectionSize::new(0);
         for block in &self.final_block_order {
             code_section.offset = I::align_basic_block(code_section.offset);
             let (start, end) = self.block_ranges[*block as usize];
             for iix in start..end {
                 self.insts[iix as usize]
                     .with_block_offsets(code_section.offset, &self.final_block_offsets[..]);
-                self.insts[iix as usize].emit(&mut code_section, &mut const_section);
+                self.insts[iix as usize].emit(&mut code_section);
             }
         }
     }
@@ -520,21 +508,20 @@ impl<I: VCodeInst> VCode<I> {
     {
         let mut sections = MachSections::new();
         let code_idx = sections.add_section(0, self.code_size);
-        let const_idx = sections.add_section(self.constants_start, self.constants_size);
-        let (code_section, const_section) = sections.two_sections(code_idx, const_idx);
+        let code_section = sections.get_section(code_idx);
 
         for block in &self.final_block_order {
             let new_offset = I::align_basic_block(code_section.cur_offset_from_start());
             while new_offset > code_section.cur_offset_from_start() {
                 // Pad with NOPs up to the aligned block offset.
                 let nop = I::gen_nop((new_offset - code_section.cur_offset_from_start()) as usize);
-                nop.emit(code_section, const_section);
+                nop.emit(code_section);
             }
             assert_eq!(code_section.cur_offset_from_start(), new_offset);
 
             let (start, end) = self.block_ranges[*block as usize];
             for iix in start..end {
-                self.insts[iix as usize].emit(code_section, const_section);
+                self.insts[iix as usize].emit(code_section);
             }
         }
 

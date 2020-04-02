@@ -20,43 +20,9 @@ use alloc::vec::Vec;
 
 /// Memory label/reference finalization: convert a MemLabel to a PC-relative
 /// offset, possibly emitting relocation(s) as necessary.
-pub fn memlabel_finalize<O: MachSectionOutput>(
-    insn_off: CodeOffset,
-    label: &MemLabel,
-    consts: &mut O,
-) -> (i32, String) {
+pub fn memlabel_finalize(_insn_off: CodeOffset, label: &MemLabel) -> i32 {
     match label {
-        &MemLabel::PCRel(rel, ref comment) => (rel, comment.clone()),
-        &MemLabel::ConstantData(ref data) => {
-            let len = data.len();
-            let alignment = if len <= 4 {
-                4
-            } else if len <= 8 {
-                8
-            } else {
-                16
-            };
-            consts.align_to(alignment);
-            let off = consts.cur_offset_from_start();
-            consts.put_data(data.iter().as_slice());
-            let ret = (off as i32) - (insn_off as i32);
-            let comment = format!("Constant data: {:?}", data);
-            (ret, comment)
-        }
-        &MemLabel::CodeOffset(off) => (
-            (off as i32) - (insn_off as i32),
-            format!("Code offset {}", off),
-        ),
-        &MemLabel::ExtName(ref name, offset) => {
-            consts.align_to(8);
-            let off = consts.cur_offset_from_start();
-            consts.add_reloc(Reloc::Abs8, name, offset);
-            consts.put_data(&[0, 0, 0, 0, 0, 0, 0, 0]);
-            (
-                (off as i32) - (insn_off as i32),
-                format!("Ref to name {}, offset {} in constant pool", name, offset),
-            )
-        }
+        &MemLabel::PCRel(rel) => rel,
     }
 }
 
@@ -64,11 +30,7 @@ pub fn memlabel_finalize<O: MachSectionOutput>(
 /// generic arbitrary stack offset) into real addressing modes, possibly by
 /// emitting some helper instructions that come immediately before the use
 /// of this amode.
-pub fn mem_finalize<O: MachSectionOutput>(
-    insn_off: CodeOffset,
-    mem: &MemArg,
-    consts: &mut O,
-) -> (Vec<Inst>, MemArg) {
+pub fn mem_finalize(insn_off: CodeOffset, mem: &MemArg) -> (Vec<Inst>, MemArg) {
     match mem {
         &MemArg::SPOffset(off) | &MemArg::FPOffset(off) => {
             let basereg = match mem {
@@ -92,8 +54,8 @@ pub fn mem_finalize<O: MachSectionOutput>(
             }
         }
         &MemArg::Label(ref label) => {
-            let (off, comment) = memlabel_finalize(insn_off, label, consts);
-            (vec![], MemArg::Label(MemLabel::PCRel(off, comment)))
+            let off = memlabel_finalize(insn_off, label);
+            (vec![], MemArg::Label(MemLabel::PCRel(off)))
         }
         _ => (vec![], mem.clone()),
     }
@@ -281,7 +243,7 @@ fn enc_cset(rd: Writable<Reg>, cond: Cond) -> u32 {
 }
 
 impl<O: MachSectionOutput> MachInstEmit<O> for Inst {
-    fn emit(&self, sink: &mut O, consts: &mut O) {
+    fn emit(&self, sink: &mut O) {
         match self {
             &Inst::AluRRR { alu_op, rd, rn, rm } => {
                 let top11 = match alu_op {
@@ -501,10 +463,10 @@ impl<O: MachSectionOutput> MachInstEmit<O> for Inst {
             | &Inst::ULoad32 { rd, ref mem }
             | &Inst::SLoad32 { rd, ref mem }
             | &Inst::ULoad64 { rd, ref mem, .. } => {
-                let (mem_insts, mem) = mem_finalize(sink.cur_offset_from_start(), mem, consts);
+                let (mem_insts, mem) = mem_finalize(sink.cur_offset_from_start(), mem);
 
                 for inst in mem_insts.into_iter() {
-                    inst.emit(sink, consts);
+                    inst.emit(sink);
                 }
 
                 // ldst encoding helpers take Reg, not Writable<Reg>.
@@ -545,17 +507,7 @@ impl<O: MachSectionOutput> MachInstEmit<O> for Inst {
                     }
                     &MemArg::Label(ref label) => {
                         let offset = match label {
-                            &MemLabel::PCRel(off, _) => {
-                                if off < 0 {
-                                    // Happens only before computing final section
-                                    // offsets.
-                                    assert!(consts.start_offset() == 0);
-                                    0
-                                } else {
-                                    off as u32
-                                }
-                            }
-                            _ => panic!("Unlowered MemLabel at emission: {:?}", label),
+                            &MemLabel::PCRel(off) => off as u32,
                         } / 4;
                         assert!(offset < (1 << 19));
                         match self {
@@ -588,10 +540,10 @@ impl<O: MachSectionOutput> MachInstEmit<O> for Inst {
             | &Inst::Store16 { rd, ref mem }
             | &Inst::Store32 { rd, ref mem }
             | &Inst::Store64 { rd, ref mem, .. } => {
-                let (mem_insts, mem) = mem_finalize(sink.cur_offset_from_start(), mem, consts);
+                let (mem_insts, mem) = mem_finalize(sink.cur_offset_from_start(), mem);
 
                 for inst in mem_insts.into_iter() {
-                    inst.emit(sink, consts);
+                    inst.emit(sink);
                 }
 
                 let op = match self {
@@ -739,7 +691,7 @@ impl<O: MachSectionOutput> MachInstEmit<O> for Inst {
                 if top22 != 0 {
                     sink.put4(enc_extend(top22, rd, rn));
                 } else {
-                    Inst::mov32(rd, rn).emit(sink, consts);
+                    Inst::mov32(rd, rn).emit(sink);
                 }
             }
             &Inst::Extend {
@@ -762,7 +714,7 @@ impl<O: MachSectionOutput> MachInstEmit<O> for Inst {
                     rn: zero_reg(),
                     rm: rd.to_reg(),
                 };
-                sub_inst.emit(sink, consts);
+                sub_inst.emit(sink);
             }
             &Inst::Extend {
                 rd,
@@ -860,7 +812,7 @@ impl<O: MachSectionOutput> MachInstEmit<O> for Inst {
                 sink.put4(0xd4200000);
             }
             &Inst::Adr { rd, ref label } => {
-                let (off, _) = memlabel_finalize(sink.cur_offset_from_start(), label, consts);
+                let off = memlabel_finalize(sink.cur_offset_from_start(), label);
                 assert!(off > -(1 << 20));
                 assert!(off < (1 << 20));
                 sink.put4(enc_adr(off, rd));
@@ -888,19 +840,19 @@ impl<O: MachSectionOutput> MachInstEmit<O> for Inst {
                 // Save index in a tmp (the live range of ridx only goes to start of this
                 // sequence; rtmp1 or rtmp2 may overwrite it).
                 let inst = Inst::gen_move(rtmp2, ridx);
-                inst.emit(sink, consts);
+                inst.emit(sink);
                 // Load address of jump table
                 let inst = Inst::Adr {
                     rd: rtmp1,
-                    label: MemLabel::PCRel(16, String::new()),
+                    label: MemLabel::PCRel(16),
                 };
-                inst.emit(sink, consts);
+                inst.emit(sink);
                 // Load value out of jump table
                 let inst = Inst::SLoad32 {
                     rd: rtmp2,
                     mem: MemArg::reg_reg_scaled(rtmp1.to_reg(), rtmp2.to_reg(), I32),
                 };
-                inst.emit(sink, consts);
+                inst.emit(sink);
                 // Add base of jump table to jump-table-sourced block offset
                 let inst = Inst::AluRRR {
                     alu_op: ALUOp::Add64,
@@ -908,20 +860,51 @@ impl<O: MachSectionOutput> MachInstEmit<O> for Inst {
                     rn: rtmp1.to_reg(),
                     rm: rtmp2.to_reg(),
                 };
-                inst.emit(sink, consts);
+                inst.emit(sink);
                 // Branch to computed address. (`targets` here is only used for successor queries
                 // and is not needed for emission.)
                 let inst = Inst::IndirectBr {
                     rn: rtmp1.to_reg(),
                     targets: vec![],
                 };
-                inst.emit(sink, consts);
+                inst.emit(sink);
                 // Emit jump table (table of 32-bit offsets).
                 for target in targets {
                     let off = target.as_offset_words() * 4;
                     let off = off as i32 as u32;
                     sink.put4(off);
                 }
+            }
+            &Inst::LoadConst64 { rd, const_data } => {
+                let inst = Inst::ULoad64 {
+                    rd,
+                    mem: MemArg::Label(MemLabel::PCRel(8)),
+                    is_reload: None,
+                };
+                inst.emit(sink);
+                let inst = Inst::Jump {
+                    dest: BranchTarget::ResolvedOffset(12),
+                };
+                inst.emit(sink);
+                sink.put8(const_data);
+            }
+            &Inst::LoadExtName {
+                rd,
+                ref name,
+                offset,
+            } => {
+                let inst = Inst::ULoad64 {
+                    rd,
+                    mem: MemArg::Label(MemLabel::PCRel(8)),
+                    is_reload: None,
+                };
+                inst.emit(sink);
+                let inst = Inst::Jump {
+                    dest: BranchTarget::ResolvedOffset(12),
+                };
+                inst.emit(sink);
+                sink.add_reloc(Reloc::Abs8, name, offset);
+                sink.put8(0);
             }
         }
     }
@@ -2102,20 +2085,11 @@ mod test {
         insns.push((
             Inst::ULoad64 {
                 rd: writable_xreg(1),
-                mem: MemArg::Label(MemLabel::PCRel(64, "".to_string())),
+                mem: MemArg::Label(MemLabel::PCRel(64)),
                 is_reload: None,
             },
             "01020058",
             "ldr x1, pc+64",
-        ));
-        insns.push((
-            Inst::ULoad64 {
-                rd: writable_xreg(1),
-                mem: MemArg::Label(MemLabel::ConstantData(u64_constant(0x0123456789abcdef))),
-                is_reload: None,
-            },
-            "81000058000000000000000000000000EFCDAB8967452301",
-            "ldr x1, pc+0 // Constant data: ConstantData([239, 205, 171, 137, 103, 69, 35, 1])",
         ));
         insns.push((
             Inst::ULoad64 {
@@ -2168,8 +2142,8 @@ mod test {
                 mem: MemArg::FPOffset(1048576 + 1), // 2^20 + 1
                 is_reload: None,
             },
-            "8F000058EF011D8BE10140F9000000000100100000000000",
-            "ldr x15, pc+0 // Constant data: ConstantData([1, 0, 16, 0, 0, 0, 0, 0]) ; add x15, x15, fp ; ldr x1, [x15]",
+            "4F000058030000140100100000000000EF011D8BE10140F9",
+            "ldr x15, 8 ; b 12 ; data 1048577 ; add x15, x15, fp ; ldr x1, [x15]",
         ));
 
         insns.push((
@@ -2912,7 +2886,7 @@ mod test {
         insns.push((
             Inst::Adr {
                 rd: writable_xreg(15),
-                label: MemLabel::PCRel((1 << 20) - 4, "".to_string()),
+                label: MemLabel::PCRel((1 << 20) - 4),
             },
             "EFFF7F10",
             "adr x15, pc+1048572",
@@ -2926,24 +2900,21 @@ mod test {
             );
 
             // Check the printed text is as expected.
-            let mut const_sec = MachSectionSize::new(0);
-            let actual_printing = insn.show_rru_with_constsec(Some(&rru), &mut const_sec);
+            let actual_printing = insn.show_rru(Some(&rru));
             assert_eq!(expected_printing, actual_printing);
 
             // Check the encoding is as expected.
-            let (text_size, rodata_size) = {
+            let text_size = {
                 let mut code_sec = MachSectionSize::new(0);
-                let mut const_sec = MachSectionSize::new(0);
-                insn.emit(&mut code_sec, &mut const_sec);
-                (code_sec.size(), const_sec.size())
+                insn.emit(&mut code_sec);
+                code_sec.size()
             };
 
             let mut sink = test_utils::TestCodeSink::new();
             let mut sections = MachSections::new();
-            sections.add_section(0, text_size);
-            sections.add_section(Inst::align_constant_pool(text_size), rodata_size);
-            let (code_sec, const_sec) = sections.two_sections(0, 1);
-            insn.emit(code_sec, const_sec);
+            let code_idx = sections.add_section(0, text_size);
+            let code_sec = sections.get_section(code_idx);
+            insn.emit(code_sec);
             sections.emit(&mut sink);
             let actual_encoding = &sink.stringify();
             assert_eq!(expected_encoding, actual_encoding);
