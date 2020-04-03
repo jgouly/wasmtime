@@ -122,8 +122,8 @@ pub fn lookup(triple: Triple) -> Result<Builder, LookupError> {
         Architecture::Riscv32 | Architecture::Riscv64 => isa_builder!(riscv, "riscv", triple),
         Architecture::Arm { .. } => isa_builder!(arm32, "arm32", triple),
         Architecture::Aarch64 { .. } => isa_builder!(arm64, "arm64", triple),
-        //Architecture::X86_64 => isa_builder!(x86, "x86", triple),
-        Architecture::X86_64 => isa_builder!(x64, "x86", triple),
+        Architecture::X86_64 => isa_builder!(x86, "x86", triple),
+        //Architecture::X86_64 => isa_builder!(x64, "x86", triple),
         _ => Err(LookupError::Unsupported),
     }
 }
