@@ -2,18 +2,13 @@ TODO:
 
 - MVP:
 
-  - Ensure correctness: build a step-by-step checker
-    - Against a WASM interpreter, using the heap and validating stores?
-      - in cranelift-wasm, emit calls to a checker runtime.
-
-  - Bringup with SpiderMonkey/arm64
-    - Baldrdash calling convention: no prologue/epilogue
+  - Floating point support?
 
   - Performance tests vs. SpiderMonkey WASM
-    - make sure that cranelift-wasm can run (or wasmtime?)
-    - compile benchmarks (Spec CPU? bzip2? rustfmt? tinycc?)
-    - SM JS shell: ./js --wasm-compiler=ion
-    - SM with Cranelift: ./js --wasm-compiler=cranelift
+    - SpiderMonkey/Baldrdash bringup
+    - test harness: compile time, runtime from profiler run
+
+  - Clean up and prepare patch
 
 - Post-MVP:
 
@@ -21,11 +16,11 @@ TODO:
     - Jump offsets (19, 26-bit forms)
 
   - ISA:
+    - vector support
     - ImmLogic: implement the algorithm to determine whether an immediate can be
       encoded as a logical immediate
-    - Floating point and vector support
 
-  - Better section and relo handling (separate .rodata and jumptable)
+  - Better section/label handling (one pass with fixups)
 
   - API and naming cleanups
     - Add a "get input insn if we are its only use" method to LowerCtx
