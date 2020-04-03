@@ -3,21 +3,17 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
 pub fn define(args: TokenStream) -> TokenStream {
-    let (path, phase) = utils::witx_path_from_args(args);
+    let path = utils::witx_path_from_args(args);
     let doc = match witx::load(&[&path]) {
         Ok(doc) => doc,
         Err(e) => {
-            panic!("error opening file {}: {}", path, e);
+            panic!("error opening file {}: {}", path.display(), e);
         }
     };
 
     let mut ret = TokenStream::new();
 
-    let old = match phase.as_str() {
-        "snapshot" => false,
-        "old/snapshot_0" => true,
-        s => panic!("unsupported phase: {}", s),
-    };
+    let old = true;
 
     for module in doc.modules() {
         for func in module.funcs() {
@@ -92,8 +88,7 @@ fn generate_wrappers(func: &witx::InterfaceFunc, old: bool) -> TokenStream {
         quote! {
             let ret = #call
                 .err()
-                .unwrap_or(super::Error::ESUCCESS)
-                .as_wasi_error();
+                .unwrap_or(super::wasi::WasiError::ESUCCESS);
             log::trace!("     | errno={}", ret);
             ret.as_raw_errno()
         }

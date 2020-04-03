@@ -1,11 +1,11 @@
 [package]
 authors = ["The Cranelift Project Developers"]
 name = "cranelift-codegen"
-version = "0.59.0"
+version = "0.61.0"
 description = "Low-level code generator library"
 license = "Apache-2.0 WITH LLVM-exception"
 documentation = "https://docs.rs/cranelift-codegen"
-repository = "https://github.com/bytecodealliance/cranelift"
+repository = "https://github.com/bytecodealliance/wasmtime"
 categories = ["no-std"]
 readme = "README.md"
 keywords = ["compile", "compiler", "jit"]
@@ -13,10 +13,10 @@ build = "build.rs"
 edition = "2018"
 
 [dependencies]
-cranelift-codegen-shared = { path = "./shared", version = "0.59.0" }
-cranelift-entity = { path = "../entity", version = "0.59.0" }
-cranelift-bforest = { path = "../bforest", version = "0.59.0" }
-hashbrown = { version = "0.6", optional = true }
+cranelift-codegen-shared = { path = "./shared", version = "0.61.0" }
+cranelift-entity = { path = "../entity", version = "0.61.0" }
+cranelift-bforest = { path = "../bforest", version = "0.61.0" }
+hashbrown = { version = "0.7", optional = true }
 target-lexicon = "0.10"
 log = { version = "0.4.6", default-features = false }
 serde = { version = "1.0.94", features = ["derive"], optional = true }
@@ -31,10 +31,10 @@ regalloc = "0.0.16"
 # accomodated in `tests`.
 
 [build-dependencies]
-cranelift-codegen-meta = { path = "meta", version = "0.59.0" }
+cranelift-codegen-meta = { path = "meta", version = "0.61.0" }
 
 [features]
-default = ["std", "all-arch"]
+default = ["std", "unwind", "all-arch"]
 
 # The "std" feature enables use of libstd. The "core" feature enables use
 # of some minimal std-like replacement libraries. At least one of these two
@@ -72,4 +72,3 @@ enable-serde = ["serde"]
 
 [badges]
 maintenance = { status = "experimental" }
-travis-ci = { repository = "bytecodealliance/cranelift" }

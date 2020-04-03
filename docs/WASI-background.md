@@ -53,7 +53,7 @@ of browsers and outside of JS VMs.
 
 It's been obvious since WebAssembly was just getting started that it'd eventually
 want some kind of "system call"-like API, which could be standardized, and
-implemented in any general-purpose WebAssembly VM. 
+implemented in any general-purpose WebAssembly VM.
 
 And while there are many existing systems we could model this after, [POSIX]
 stands out, as being a vendor-neutral standard with considerable momentum. Many
@@ -73,7 +73,7 @@ bakes in in understandings about what processes are and what communication
 between them looks like.
 
 Pipes, Unix-domain sockets, POSIX shared memory, signals, files with `fcntl`
-`F_SETLK`/`F_GETLK`-style locking (which is process-associated), are are tied
+`F_SETLK`/`F_GETLK`-style locking (which is process-associated), are tied
 to processes. But what *is* a process, when we're talking about WebAssembly?
 
 ## Stick a fork in it

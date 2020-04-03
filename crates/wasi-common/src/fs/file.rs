@@ -1,5 +1,7 @@
 use crate::fs::Metadata;
-use crate::{host, hostcalls, hostcalls_impl, wasi, Result, WasiCtx};
+use crate::wasi::wasi_snapshot_preview1::WasiSnapshotPreview1;
+use crate::wasi::{types, Result};
+use crate::WasiCtx;
 use std::io;
 
 /// A reference to an open file on the filesystem.
@@ -15,8 +17,8 @@ use std::io;
 /// [`Dir::open_file`]: struct.Dir.html#method.open_file
 /// [`Dir::create_file`]: struct.Dir.html#method.create_file
 pub struct File<'ctx> {
-    ctx: &'ctx mut WasiCtx,
-    fd: wasi::__wasi_fd_t,
+    ctx: &'ctx WasiCtx,
+    fd: types::Fd,
 }
 
 impl<'ctx> File<'ctx> {
@@ -25,7 +27,7 @@ impl<'ctx> File<'ctx> {
     /// This corresponds to [`std::fs::File::from_raw_fd`].
     ///
     /// [`std::fs::File::from_raw_fd`]: https://doc.rust-lang.org/std/fs/struct.File.html#method.from_raw_fd
-    pub unsafe fn from_raw_wasi_fd(ctx: &'ctx mut WasiCtx, fd: wasi::__wasi_fd_t) -> Self {
+    pub unsafe fn from_raw_wasi_fd(ctx: &'ctx WasiCtx, fd: types::Fd) -> Self {
         Self { ctx, fd }
     }
 
@@ -35,9 +37,7 @@ impl<'ctx> File<'ctx> {
     ///
     /// [`std::fs::File::sync_all`]: https://doc.rust-lang.org/std/fs/struct.File.html#method.sync_all
     pub fn sync_all(&self) -> Result<()> {
-        unsafe {
-            hostcalls_impl::fd_sync(self.ctx, &mut [], self.fd)?;
-        }
+        self.ctx.fd_sync(self.fd)?;
         Ok(())
     }
 
@@ -48,9 +48,7 @@ impl<'ctx> File<'ctx> {
     ///
     /// [`std::fs::File::sync_data`]: https://doc.rust-lang.org/std/fs/struct.File.html#method.sync_data
     pub fn sync_data(&self) -> Result<()> {
-        unsafe {
-            hostcalls_impl::fd_datasync(self.ctx, &mut [], self.fd)?;
-        }
+        self.ctx.fd_datasync(self.fd)?;
         Ok(())
     }
 
@@ -61,9 +59,7 @@ impl<'ctx> File<'ctx> {
     ///
     /// [`std::fs::File::set_len`]: https://doc.rust-lang.org/std/fs/struct.File.html#method.set_len
     pub fn set_len(&self, size: u64) -> Result<()> {
-        unsafe {
-            hostcalls_impl::fd_filestat_set_size(self.ctx, &mut [], self.fd, size)?;
-        }
+        self.ctx.fd_filestat_set_size(self.fd, size)?;
         Ok(())
     }
 
@@ -84,17 +80,18 @@ impl<'ctx> Drop for File<'ctx> {
         // the file descriptor was closed or not, and if we retried (for
         // something like EINTR), we might close another valid file descriptor
         // opened after we closed ours.
-        let _ = unsafe { hostcalls::fd_close(self.ctx, &mut [], self.fd) };
+        let _ = self.ctx.fd_close(self.fd);
     }
 }
 
 impl<'ctx> io::Read for File<'ctx> {
     /// TODO: Not yet implemented. See the comment in `Dir::open_file`.
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        let iov = [host::__wasi_iovec_t {
-            buf: buf.as_mut_ptr() as *mut u8,
-            buf_len: buf.len(),
-        }];
+        // TODO
+        // let iov = [types::Iovec {
+        //     buf: buf.as_mut_ptr() as *mut u8,
+        //     buf_len: buf.len(),
+        // }];
         let mut nread = 0;
 
         // TODO: See the comment in `Dir::open_file`.

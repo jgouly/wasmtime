@@ -1,11 +1,12 @@
 use super::address_transform::AddressTransform;
-use anyhow::Error;
-use gimli::{self, write, Expression, Operation, Reader, ReaderOffset, Register, X86_64};
+use anyhow::{Context, Error, Result};
+use gimli::{self, write, Expression, Operation, Reader, ReaderOffset, X86_64};
 use more_asserts::{assert_le, assert_lt};
 use std::collections::{HashMap, HashSet};
 use wasmtime_environ::entity::EntityRef;
 use wasmtime_environ::ir::{StackSlots, ValueLabel, ValueLabelsRanges, ValueLoc};
-use wasmtime_environ::isa::RegUnit;
+use wasmtime_environ::isa::fde::map_reg;
+use wasmtime_environ::isa::TargetIsa;
 use wasmtime_environ::wasm::{get_vmctx_value_label, DefinedFuncIndex};
 use wasmtime_environ::ModuleMemoryOffset;
 
@@ -37,9 +38,10 @@ enum CompiledExpressionPart {
 }
 
 #[derive(Debug)]
-pub struct CompiledExpression {
+pub struct CompiledExpression<'a> {
     parts: Vec<CompiledExpressionPart>,
     need_deref: bool,
+    isa: &'a dyn TargetIsa,
 }
 
 impl Clone for CompiledExpressionPart {
@@ -52,88 +54,39 @@ impl Clone for CompiledExpressionPart {
     }
 }
 
-impl CompiledExpression {
-    pub fn vmctx() -> CompiledExpression {
-        CompiledExpression::from_label(get_vmctx_value_label())
+impl<'a> CompiledExpression<'a> {
+    pub fn vmctx(isa: &'a dyn TargetIsa) -> CompiledExpression {
+        CompiledExpression::from_label(get_vmctx_value_label(), isa)
     }
 
-    pub fn from_label(label: ValueLabel) -> CompiledExpression {
+    pub fn from_label(label: ValueLabel, isa: &'a dyn TargetIsa) -> CompiledExpression<'a> {
         CompiledExpression {
             parts: vec![
                 CompiledExpressionPart::Local(label),
                 CompiledExpressionPart::Code(vec![gimli::constants::DW_OP_stack_value.0 as u8]),
             ],
             need_deref: false,
+            isa,
         }
     }
 }
 
-fn map_reg(reg: RegUnit) -> Register {
-    static mut REG_X86_MAP: Option<HashMap<RegUnit, Register>> = None;
-    // FIXME lazy initialization?
-    unsafe {
-        if REG_X86_MAP.is_none() {
-            REG_X86_MAP = Some(HashMap::new());
-        }
-        if let Some(val) = REG_X86_MAP.as_mut().unwrap().get(&reg) {
-            return *val;
-        }
-        let result = match reg {
-            0 => X86_64::RAX,
-            1 => X86_64::RCX,
-            2 => X86_64::RDX,
-            3 => X86_64::RBX,
-            4 => X86_64::RSP,
-            5 => X86_64::RBP,
-            6 => X86_64::RSI,
-            7 => X86_64::RDI,
-            8 => X86_64::R8,
-            9 => X86_64::R9,
-            10 => X86_64::R10,
-            11 => X86_64::R11,
-            12 => X86_64::R12,
-            13 => X86_64::R13,
-            14 => X86_64::R14,
-            15 => X86_64::R15,
-            16 => X86_64::XMM0,
-            17 => X86_64::XMM1,
-            18 => X86_64::XMM2,
-            19 => X86_64::XMM3,
-            20 => X86_64::XMM4,
-            21 => X86_64::XMM5,
-            22 => X86_64::XMM6,
-            23 => X86_64::XMM7,
-            24 => X86_64::XMM8,
-            25 => X86_64::XMM9,
-            26 => X86_64::XMM10,
-            27 => X86_64::XMM11,
-            28 => X86_64::XMM12,
-            29 => X86_64::XMM13,
-            30 => X86_64::XMM14,
-            31 => X86_64::XMM15,
-            _ => panic!("unknown x86_64 register {}", reg),
-        };
-        REG_X86_MAP.as_mut().unwrap().insert(reg, result);
-        result
-    }
-}
-
-fn translate_loc(loc: ValueLoc, frame_info: Option<&FunctionFrameInfo>) -> Option<Vec<u8>> {
+fn translate_loc(
+    loc: ValueLoc,
+    frame_info: Option<&FunctionFrameInfo>,
+    isa: &dyn TargetIsa,
+) -> Result<Option<Vec<u8>>> {
     use gimli::write::Writer;
-    match loc {
+    Ok(match loc {
         ValueLoc::Reg(reg) => {
-            let machine_reg = map_reg(reg).0 as u8;
+            let machine_reg = map_reg(isa, reg)?.0 as u8;
             Some(if machine_reg < 32 {
                 vec![gimli::constants::DW_OP_reg0.0 + machine_reg]
             } else {
                 let endian = gimli::RunTimeEndian::Little;
                 let mut writer = write::EndianVec::new(endian);
-                writer
-                    .write_u8(gimli::constants::DW_OP_regx.0 as u8)
-                    .expect("regx");
-                writer
-                    .write_uleb128(machine_reg.into())
-                    .expect("machine_reg");
+                writer.write_u8(gimli::constants::DW_OP_regx.0 as u8)?;
+                writer.write_uleb128(machine_reg.into())?;
                 writer.into_vec()
             })
         }
@@ -142,21 +95,17 @@ fn translate_loc(loc: ValueLoc, frame_info: Option<&FunctionFrameInfo>) -> Optio
                 if let Some(ss_offset) = frame_info.stack_slots[ss].offset {
                     let endian = gimli::RunTimeEndian::Little;
                     let mut writer = write::EndianVec::new(endian);
-                    writer
-                        .write_u8(gimli::constants::DW_OP_breg0.0 + X86_64::RBP.0 as u8)
-                        .expect("bp wr");
-                    writer.write_sleb128(ss_offset as i64 + 16).expect("ss wr");
-                    writer
-                        .write_u8(gimli::constants::DW_OP_deref.0 as u8)
-                        .expect("bp wr");
+                    writer.write_u8(gimli::constants::DW_OP_breg0.0 + X86_64::RBP.0 as u8)?;
+                    writer.write_sleb128(ss_offset as i64 + 16)?;
+                    writer.write_u8(gimli::constants::DW_OP_deref.0 as u8)?;
                     let buf = writer.into_vec();
-                    return Some(buf);
+                    return Ok(Some(buf));
                 }
             }
             None
         }
         _ => None,
-    }
+    })
 }
 
 fn append_memory_deref(
@@ -164,13 +113,14 @@ fn append_memory_deref(
     frame_info: &FunctionFrameInfo,
     vmctx_loc: ValueLoc,
     endian: gimli::RunTimeEndian,
-) -> write::Result<bool> {
+    isa: &dyn TargetIsa,
+) -> Result<bool> {
     use gimli::write::Writer;
     let mut writer = write::EndianVec::new(endian);
     // FIXME for imported memory
     match vmctx_loc {
         ValueLoc::Reg(vmctx_reg) => {
-            let reg = map_reg(vmctx_reg);
+            let reg = map_reg(isa, vmctx_reg)?;
             writer.write_u8(gimli::constants::DW_OP_breg0.0 + reg.0 as u8)?;
             let memory_offset = match frame_info.vmctx_memory_offset() {
                 Some(offset) => offset,
@@ -213,7 +163,7 @@ fn append_memory_deref(
     Ok(true)
 }
 
-impl CompiledExpression {
+impl<'a> CompiledExpression<'a> {
     pub fn is_simple(&self) -> bool {
         if let [CompiledExpressionPart::Code(_)] = self.parts.as_slice() {
             true
@@ -236,9 +186,9 @@ impl CompiledExpression {
         addr_tr: &AddressTransform,
         frame_info: Option<&FunctionFrameInfo>,
         endian: gimli::RunTimeEndian,
-    ) -> Vec<(write::Address, u64, write::Expression)> {
+    ) -> Result<Vec<(write::Address, u64, write::Expression)>> {
         if scope.is_empty() {
-            return vec![];
+            return Ok(vec![]);
         }
 
         if let [CompiledExpressionPart::Code(code)] = self.parts.as_slice() {
@@ -248,7 +198,7 @@ impl CompiledExpression {
                     result_scope.push((addr, len, write::Expression(code.to_vec())));
                 }
             }
-            return result_scope;
+            return Ok(result_scope);
         }
 
         let vmctx_label = get_vmctx_value_label();
@@ -283,8 +233,8 @@ impl CompiledExpression {
                 match part {
                     CompiledExpressionPart::Code(c) => code_buf.extend_from_slice(c.as_slice()),
                     CompiledExpressionPart::Local(label) => {
-                        let loc = *label_location.get(&label).expect("loc");
-                        if let Some(expr) = translate_loc(loc, frame_info) {
+                        let loc = *label_location.get(&label).context("label_location")?;
+                        if let Some(expr) = translate_loc(loc, frame_info, self.isa)? {
                             code_buf.extend_from_slice(&expr)
                         } else {
                             continue 'range;
@@ -294,9 +244,13 @@ impl CompiledExpression {
                         if let (Some(vmctx_loc), Some(frame_info)) =
                             (label_location.get(&vmctx_label), frame_info)
                         {
-                            if !append_memory_deref(&mut code_buf, frame_info, *vmctx_loc, endian)
-                                .expect("append_memory_deref")
-                            {
+                            if !append_memory_deref(
+                                &mut code_buf,
+                                frame_info,
+                                *vmctx_loc,
+                                endian,
+                                self.isa,
+                            )? {
                                 continue 'range;
                             }
                         } else {
@@ -309,9 +263,13 @@ impl CompiledExpression {
                 if let (Some(vmctx_loc), Some(frame_info)) =
                     (label_location.get(&vmctx_label), frame_info)
                 {
-                    if !append_memory_deref(&mut code_buf, frame_info, *vmctx_loc, endian)
-                        .expect("append_memory_deref")
-                    {
+                    if !append_memory_deref(
+                        &mut code_buf,
+                        frame_info,
+                        *vmctx_loc,
+                        endian,
+                        self.isa,
+                    )? {
                         continue 'range;
                     }
                 } else {
@@ -328,7 +286,7 @@ impl CompiledExpression {
             ));
         }
 
-        result
+        Ok(result)
     }
 }
 
@@ -342,11 +300,12 @@ fn is_old_expression_format(buf: &[u8]) -> bool {
     buf.contains(&(gimli::constants::DW_OP_plus_uconst.0 as u8))
 }
 
-pub fn compile_expression<R>(
+pub fn compile_expression<'a, R>(
     expr: &Expression<R>,
     encoding: gimli::Encoding,
     frame_base: Option<&CompiledExpression>,
-) -> Result<Option<CompiledExpression>, Error>
+    isa: &'a dyn TargetIsa,
+) -> Result<Option<CompiledExpression<'a>>, Error>
 where
     R: Reader,
 {
@@ -368,9 +327,20 @@ where
             // WebAssembly DWARF extension
             pc.read_u8()?;
             let ty = pc.read_uleb128()?;
-            assert_eq!(ty, 0);
+            // Supporting only wasm locals.
+            if ty != 0 {
+                // TODO support wasm globals?
+                return Ok(None);
+            }
             let index = pc.read_sleb128()?;
-            pc.read_u8()?; // consume 159
+            if pc.read_u8()? != 159 {
+                // FIXME The following operator is not DW_OP_stack_value, e.g. :
+                // DW_AT_location  (0x00000ea5:
+                //   [0x00001e19, 0x00001e26): DW_OP_WASM_location 0x0 +1, DW_OP_plus_uconst 0x10, DW_OP_stack_value
+                //   [0x00001e5a, 0x00001e72): DW_OP_WASM_location 0x0 +20, DW_OP_stack_value
+                // )
+                return Ok(None);
+            }
             if !code_chunk.is_empty() {
                 parts.push(CompiledExpressionPart::Code(code_chunk));
                 code_chunk = Vec::new();
@@ -437,7 +407,11 @@ where
         }
     }
 
-    Ok(Some(CompiledExpression { parts, need_deref }))
+    Ok(Some(CompiledExpression {
+        parts,
+        need_deref,
+        isa,
+    }))
 }
 
 #[derive(Debug, Clone)]

@@ -3,7 +3,7 @@
 #![allow(non_snake_case)]
 #![allow(unused)]
 use crate::old::snapshot_0::host::FileType;
-use crate::old::snapshot_0::{error::FromRawOsError, wasi, Error, Result};
+use crate::old::snapshot_0::wasi::{self, WasiError, WasiResult};
 use std::convert::TryInto;
 use std::ffi::OsStr;
 use std::fs::OpenOptions;
@@ -12,44 +12,45 @@ use std::io;
 use std::os::windows::ffi::OsStrExt;
 use std::os::windows::fs::OpenOptionsExt;
 use std::time::{SystemTime, UNIX_EPOCH};
+use winapi::shared::winerror;
 use winx::file::{AccessMode, Attributes, CreationDisposition, Flags};
-use winx::winerror::WinError;
 
-impl FromRawOsError for Error {
-    fn from_raw_os_error(code: i32) -> Self {
-        Self::from(WinError::from_u32(code as u32))
-    }
-}
-
-impl From<WinError> for Error {
-    fn from(err: WinError) -> Self {
-        // TODO: implement error mapping between Windows and WASI
-        use winx::winerror::WinError::*;
-        match err {
-            ERROR_SUCCESS => Self::ESUCCESS,
-            ERROR_BAD_ENVIRONMENT => Self::E2BIG,
-            ERROR_FILE_NOT_FOUND => Self::ENOENT,
-            ERROR_PATH_NOT_FOUND => Self::ENOENT,
-            ERROR_TOO_MANY_OPEN_FILES => Self::ENFILE,
-            ERROR_ACCESS_DENIED => Self::EACCES,
-            ERROR_SHARING_VIOLATION => Self::EACCES,
-            ERROR_PRIVILEGE_NOT_HELD => Self::ENOTCAPABLE, // TODO is this the correct mapping?
-            ERROR_INVALID_HANDLE => Self::EBADF,
-            ERROR_INVALID_NAME => Self::ENOENT,
-            ERROR_NOT_ENOUGH_MEMORY => Self::ENOMEM,
-            ERROR_OUTOFMEMORY => Self::ENOMEM,
-            ERROR_DIR_NOT_EMPTY => Self::ENOTEMPTY,
-            ERROR_NOT_READY => Self::EBUSY,
-            ERROR_BUSY => Self::EBUSY,
-            ERROR_NOT_SUPPORTED => Self::ENOTSUP,
-            ERROR_FILE_EXISTS => Self::EEXIST,
-            ERROR_BROKEN_PIPE => Self::EPIPE,
-            ERROR_BUFFER_OVERFLOW => Self::ENAMETOOLONG,
-            ERROR_NOT_A_REPARSE_POINT => Self::EINVAL,
-            ERROR_NEGATIVE_SEEK => Self::EINVAL,
-            ERROR_DIRECTORY => Self::ENOTDIR,
-            ERROR_ALREADY_EXISTS => Self::EEXIST,
-            _ => Self::ENOTSUP,
+impl From<io::Error> for WasiError {
+    fn from(err: io::Error) -> Self {
+        match err.raw_os_error() {
+            Some(code) => match code as u32 {
+                winerror::ERROR_SUCCESS => Self::ESUCCESS,
+                winerror::ERROR_BAD_ENVIRONMENT => Self::E2BIG,
+                winerror::ERROR_FILE_NOT_FOUND => Self::ENOENT,
+                winerror::ERROR_PATH_NOT_FOUND => Self::ENOENT,
+                winerror::ERROR_TOO_MANY_OPEN_FILES => Self::ENFILE,
+                winerror::ERROR_ACCESS_DENIED => Self::EACCES,
+                winerror::ERROR_SHARING_VIOLATION => Self::EACCES,
+                winerror::ERROR_PRIVILEGE_NOT_HELD => Self::ENOTCAPABLE,
+                winerror::ERROR_INVALID_HANDLE => Self::EBADF,
+                winerror::ERROR_INVALID_NAME => Self::ENOENT,
+                winerror::ERROR_NOT_ENOUGH_MEMORY => Self::ENOMEM,
+                winerror::ERROR_OUTOFMEMORY => Self::ENOMEM,
+                winerror::ERROR_DIR_NOT_EMPTY => Self::ENOTEMPTY,
+                winerror::ERROR_NOT_READY => Self::EBUSY,
+                winerror::ERROR_BUSY => Self::EBUSY,
+                winerror::ERROR_NOT_SUPPORTED => Self::ENOTSUP,
+                winerror::ERROR_FILE_EXISTS => Self::EEXIST,
+                winerror::ERROR_BROKEN_PIPE => Self::EPIPE,
+                winerror::ERROR_BUFFER_OVERFLOW => Self::ENAMETOOLONG,
+                winerror::ERROR_NOT_A_REPARSE_POINT => Self::EINVAL,
+                winerror::ERROR_NEGATIVE_SEEK => Self::EINVAL,
+                winerror::ERROR_DIRECTORY => Self::ENOTDIR,
+                winerror::ERROR_ALREADY_EXISTS => Self::EEXIST,
+                x => {
+                    log::debug!("unknown error value: {}", x);
+                    Self::EIO
+                }
+            },
+            None => {
+                log::debug!("Other I/O error: {}", err);
+                Self::EIO
+            }
         }
     }
 }
@@ -144,15 +145,15 @@ fn change_time(file: &File) -> io::Result<i64> {
     winx::file::change_time(file)
 }
 
-fn systemtime_to_timestamp(st: SystemTime) -> Result<u64> {
+fn systemtime_to_timestamp(st: SystemTime) -> WasiResult<u64> {
     st.duration_since(UNIX_EPOCH)
-        .map_err(|_| Error::EINVAL)? // date earlier than UNIX_EPOCH
+        .map_err(|_| WasiError::EINVAL)? // date earlier than UNIX_EPOCH
         .as_nanos()
         .try_into()
         .map_err(Into::into) // u128 doesn't fit into u64
 }
 
-pub(crate) fn filestat_from_win(file: &File) -> Result<wasi::__wasi_filestat_t> {
+pub(crate) fn filestat_from_win(file: &File) -> WasiResult<wasi::__wasi_filestat_t> {
     let metadata = file.metadata()?;
     Ok(wasi::__wasi_filestat_t {
         dev: device_id(file)?,
@@ -170,7 +171,7 @@ pub(crate) fn filestat_from_win(file: &File) -> Result<wasi::__wasi_filestat_t> 
 ///
 /// NB WASI spec requires OS string to be valid UTF-8. Otherwise,
 /// `__WASI_ERRNO_ILSEQ` error is returned.
-pub(crate) fn path_from_host<S: AsRef<OsStr>>(s: S) -> Result<String> {
+pub(crate) fn path_from_host<S: AsRef<OsStr>>(s: S) -> WasiResult<String> {
     let vec: Vec<u16> = s.as_ref().encode_wide().collect();
-    String::from_utf16(&vec).map_err(|_| Error::EILSEQ)
+    String::from_utf16(&vec).map_err(|_| WasiError::EILSEQ)
 }

@@ -79,30 +79,37 @@ pub fn compile_to_obj(
     };
 
     // TODO: use the traps information
-    let (compilation, relocations, address_transform, value_ranges, stack_slots, _traps) =
-        match strategy {
-            Strategy::Auto | Strategy::Cranelift => Cranelift::compile_module(
-                &module,
-                &module_translation,
-                lazy_function_body_inputs,
-                &*isa,
-                debug_info,
-                cache_config,
-            ),
-            #[cfg(feature = "lightbeam")]
-            Strategy::Lightbeam => Lightbeam::compile_module(
-                &module,
-                &module_translation,
-                lazy_function_body_inputs,
-                &*isa,
-                debug_info,
-                cache_config,
-            ),
-            #[cfg(not(feature = "lightbeam"))]
-            Strategy::Lightbeam => bail!("lightbeam support not enabled"),
-            other => bail!("unsupported compilation strategy {:?}", other),
-        }
-        .context("failed to compile module")?;
+    let (
+        compilation,
+        relocations,
+        address_transform,
+        value_ranges,
+        stack_slots,
+        _traps,
+        frame_layouts,
+    ) = match strategy {
+        Strategy::Auto | Strategy::Cranelift => Cranelift::compile_module(
+            &module,
+            &module_translation,
+            lazy_function_body_inputs,
+            &*isa,
+            debug_info,
+            cache_config,
+        ),
+        #[cfg(feature = "lightbeam")]
+        Strategy::Lightbeam => Lightbeam::compile_module(
+            &module,
+            &module_translation,
+            lazy_function_body_inputs,
+            &*isa,
+            debug_info,
+            cache_config,
+        ),
+        #[cfg(not(feature = "lightbeam"))]
+        Strategy::Lightbeam => bail!("lightbeam support not enabled"),
+        other => bail!("unsupported compilation strategy {:?}", other),
+    }
+    .context("failed to compile module")?;
 
     if compilation.is_empty() {
         bail!("no functions were found/compiled");
@@ -136,14 +143,15 @@ pub fn compile_to_obj(
     .context("failed to emit module")?;
 
     if debug_info {
-        let debug_data = read_debuginfo(wasm);
+        let debug_data = read_debuginfo(wasm).context("failed to emit DWARF")?;
         emit_debugsections(
             &mut obj,
             &module_vmctx_info,
-            target_config,
+            &*isa,
             &debug_data,
             &address_transform,
             &value_ranges,
+            &frame_layouts,
         )
         .context("failed to emit debug sections")?;
     }

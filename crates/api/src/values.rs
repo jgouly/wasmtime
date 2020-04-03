@@ -2,7 +2,6 @@ use crate::r#ref::AnyRef;
 use crate::{Func, Store, ValType};
 use anyhow::{bail, Result};
 use std::ptr;
-use wasmtime_environ::ir;
 
 /// Possible runtime values that a WebAssembly module can either consume or
 /// produce.
@@ -81,7 +80,7 @@ impl Val {
         }
     }
 
-    pub(crate) unsafe fn write_value_to(&self, p: *mut i128) {
+    pub(crate) unsafe fn write_value_to(&self, p: *mut u128) {
         match self {
             Val::I32(i) => ptr::write(p as *mut i32, *i),
             Val::I64(i) => ptr::write(p as *mut i64, *i),
@@ -92,13 +91,13 @@ impl Val {
         }
     }
 
-    pub(crate) unsafe fn read_value_from(p: *const i128, ty: ir::Type) -> Val {
+    pub(crate) unsafe fn read_value_from(p: *const u128, ty: &ValType) -> Val {
         match ty {
-            ir::types::I32 => Val::I32(ptr::read(p as *const i32)),
-            ir::types::I64 => Val::I64(ptr::read(p as *const i64)),
-            ir::types::F32 => Val::F32(ptr::read(p as *const u32)),
-            ir::types::F64 => Val::F64(ptr::read(p as *const u64)),
-            ir::types::I8X16 => Val::V128(ptr::read(p as *const u128)),
+            ValType::I32 => Val::I32(ptr::read(p as *const i32)),
+            ValType::I64 => Val::I64(ptr::read(p as *const i64)),
+            ValType::F32 => Val::F32(ptr::read(p as *const u32)),
+            ValType::F64 => Val::F64(ptr::read(p as *const u64)),
+            ValType::V128 => Val::V128(ptr::read(p as *const u128)),
             _ => unimplemented!("Val::read_value_from"),
         }
     }
@@ -132,6 +131,22 @@ impl Val {
     /// Panics if `self` is not of the right type.
     pub fn unwrap_anyref(&self) -> AnyRef {
         self.anyref().expect("expected anyref")
+    }
+
+    pub(crate) fn comes_from_same_store(&self, store: &Store) -> bool {
+        match self {
+            Val::FuncRef(f) => Store::same(store, f.store()),
+
+            // TODO: need to implement this once we actually finalize what
+            // `anyref` will look like and it's actually implemented to pass it
+            // to compiled wasm as well.
+            Val::AnyRef(AnyRef::Ref(_)) | Val::AnyRef(AnyRef::Other(_)) => false,
+            Val::AnyRef(AnyRef::Null) => true,
+
+            // Integers have no association with any particular store, so
+            // they're always considered as "yes I came from that store",
+            Val::I32(_) | Val::I64(_) | Val::F32(_) | Val::F64(_) | Val::V128(_) => true,
+        }
     }
 }
 
@@ -175,6 +190,9 @@ pub(crate) fn into_checked_anyfunc(
     val: Val,
     store: &Store,
 ) -> Result<wasmtime_runtime::VMCallerCheckedAnyfunc> {
+    if !val.comes_from_same_store(store) {
+        bail!("cross-`Store` values are not supported");
+    }
     Ok(match val {
         Val::AnyRef(AnyRef::Null) => wasmtime_runtime::VMCallerCheckedAnyfunc {
             func_ptr: ptr::null(),
@@ -182,19 +200,11 @@ pub(crate) fn into_checked_anyfunc(
             vmctx: ptr::null_mut(),
         },
         Val::FuncRef(f) => {
-            let (vmctx, func_ptr, signature) = match f.wasmtime_export() {
-                wasmtime_runtime::Export::Function {
-                    vmctx,
-                    address,
-                    signature,
-                } => (*vmctx, *address, signature),
-                _ => panic!("expected function export"),
-            };
-            let type_index = store.compiler().signatures().register(signature);
+            let f = f.wasmtime_function();
             wasmtime_runtime::VMCallerCheckedAnyfunc {
-                func_ptr,
-                type_index,
-                vmctx,
+                func_ptr: f.address,
+                type_index: f.signature,
+                vmctx: f.vmctx,
             }
         }
         _ => bail!("val is not funcref"),
@@ -206,17 +216,12 @@ pub(crate) fn from_checked_anyfunc(
     store: &Store,
 ) -> Val {
     if item.type_index == wasmtime_runtime::VMSharedSignatureIndex::default() {
-        return Val::AnyRef(AnyRef::Null);
+        Val::AnyRef(AnyRef::Null);
     }
-    let signature = store
-        .compiler()
-        .signatures()
-        .lookup(item.type_index)
-        .expect("signature");
     let instance_handle = unsafe { wasmtime_runtime::InstanceHandle::from_vmctx(item.vmctx) };
-    let export = wasmtime_runtime::Export::Function {
+    let export = wasmtime_runtime::ExportFunction {
         address: item.func_ptr,
-        signature,
+        signature: item.type_index,
         vmctx: item.vmctx,
     };
     let f = Func::from_wasmtime_function(export, store, instance_handle);

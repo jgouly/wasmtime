@@ -1,14 +1,13 @@
 use super::address_transform::AddressTransform;
 use super::attr::clone_attr_string;
 use super::{Reader, TransformError};
-use anyhow::Error;
+use anyhow::{Context, Error};
 use gimli::{
     write, DebugLine, DebugLineOffset, DebugStr, DebuggingInformationEntry, LineEncoding, Unit,
 };
 use more_asserts::assert_le;
-use std::collections::BTreeMap;
-use std::iter::FromIterator;
 use wasmtime_environ::entity::EntityRef;
+use wasmtime_environ::wasm::DefinedFuncIndex;
 
 #[derive(Debug)]
 enum SavedLineProgramRow {
@@ -28,10 +27,16 @@ enum SavedLineProgramRow {
     EndOfSequence(u64),
 }
 
+#[derive(Debug)]
+struct FuncRows {
+    index: DefinedFuncIndex,
+    sorted_rows: Vec<(u64, SavedLineProgramRow)>,
+}
+
 #[derive(Debug, Eq, PartialEq)]
 enum ReadLineProgramState {
     SequenceEnded,
-    ReadSequence,
+    ReadSequence(DefinedFuncIndex),
     IgnoreSequence,
 }
 
@@ -56,13 +61,13 @@ where
     let comp_dir = root.attr_value(gimli::DW_AT_comp_dir)?;
     let comp_name = root.attr_value(gimli::DW_AT_name)?;
     let out_comp_dir = clone_attr_string(
-        comp_dir.as_ref().expect("comp_dir"),
+        comp_dir.as_ref().context("comp_dir")?,
         gimli::DW_FORM_strp,
         debug_str,
         out_strings,
     )?;
     let out_comp_name = clone_attr_string(
-        comp_name.as_ref().expect("comp_name"),
+        comp_name.as_ref().context("comp_name")?,
         gimli::DW_FORM_strp,
         debug_str,
         out_strings,
@@ -119,7 +124,8 @@ where
         }
 
         let mut rows = program.rows();
-        let mut saved_rows = BTreeMap::new();
+        let mut func_rows = Vec::new();
+        let mut saved_rows: Vec<(u64, SavedLineProgramRow)> = Vec::new();
         let mut state = ReadLineProgramState::SequenceEnded;
         while let Some((_header, row)) = rows.next_row()? {
             if state == ReadLineProgramState::IgnoreSequence {
@@ -129,6 +135,17 @@ where
                 continue;
             }
             let saved_row = if row.end_sequence() {
+                let index = match state {
+                    ReadLineProgramState::ReadSequence(index) => index,
+                    _ => panic!(),
+                };
+                saved_rows.sort_by_key(|r| r.0);
+                func_rows.push(FuncRows {
+                    index,
+                    sorted_rows: saved_rows,
+                });
+
+                saved_rows = Vec::new();
                 state = ReadLineProgramState::SequenceEnded;
                 SavedLineProgramRow::EndOfSequence(row.address())
             } else {
@@ -138,7 +155,16 @@ where
                         state = ReadLineProgramState::IgnoreSequence;
                         continue;
                     }
-                    state = ReadLineProgramState::ReadSequence;
+                    match addr_tr.find_func_index(row.address()) {
+                        Some(index) => {
+                            state = ReadLineProgramState::ReadSequence(index);
+                        }
+                        None => {
+                            // Some non-existent address found.
+                            state = ReadLineProgramState::IgnoreSequence;
+                            continue;
+                        }
+                    }
                 }
                 SavedLineProgramRow::Normal {
                     address: row.address(),
@@ -157,15 +183,21 @@ where
                     isa: row.isa(),
                 }
             };
-            saved_rows.insert(row.address(), saved_row);
+            saved_rows.push((row.address(), saved_row));
         }
 
-        let saved_rows = Vec::from_iter(saved_rows.into_iter());
-        for (i, map) in addr_tr.map() {
-            if map.len == 0 {
-                continue; // no code generated
-            }
-            let symbol = i.index();
+        for FuncRows {
+            index,
+            sorted_rows: saved_rows,
+        } in func_rows
+        {
+            let map = match addr_tr.map().get(index) {
+                Some(map) if map.len > 0 => map,
+                _ => {
+                    continue; // no code generated
+                }
+            };
+            let symbol = index.index();
             let base_addr = map.offset;
             out_program.begin_sequence(Some(write::Address::Symbol { symbol, addend: 0 }));
             // TODO track and place function declaration line here

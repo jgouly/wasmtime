@@ -6,11 +6,12 @@ use super::range_info_builder::RangeInfoBuilder;
 use super::refs::{PendingDebugInfoRefs, PendingUnitRefs, UnitRefsMap};
 use super::utils::{add_internal_types, append_vmctx_info, get_function_frame_info};
 use super::{DebugInputContext, Reader, TransformError};
-use anyhow::Error;
+use anyhow::{Context, Error};
 use gimli::write;
 use gimli::{AttributeValue, DebuggingInformationEntry, Unit};
 use std::collections::HashSet;
-use wasmtime_environ::entity::EntityRef;
+use wasmtime_environ::isa::TargetIsa;
+use wasmtime_environ::wasm::DefinedFuncIndex;
 use wasmtime_environ::{ModuleVmctxInfo, ValueLabelsRanges};
 
 struct InheritedAttr<T> {
@@ -147,7 +148,8 @@ pub(crate) fn clone_unit<'a, R>(
     module_info: &ModuleVmctxInfo,
     out_units: &mut write::UnitTable,
     out_strings: &mut write::StringTable,
-    translated: &mut HashSet<u32>,
+    translated: &mut HashSet<DefinedFuncIndex>,
+    isa: &dyn TargetIsa,
 ) -> Result<Option<(write::UnitId, UnitRefsMap, PendingDebugInfoRefs)>, Error>
 where
     R: Reader,
@@ -203,6 +205,7 @@ where
                     &mut pending_die_refs,
                     &mut pending_di_refs,
                     FileAttributeContext::Root(Some(debug_line_offset)),
+                    isa,
                 )?;
 
                 let (wp_die_id, vmctx_die_id) =
@@ -267,7 +270,7 @@ where
                 {
                     current_value_range.push(new_stack_len, frame_info);
                 }
-                translated.insert(func_index.index() as u32);
+                translated.insert(func_index);
                 current_scope_ranges.push(new_stack_len, range_builder.get_ranges(addr_tr));
                 Some(range_builder)
             } else {
@@ -296,7 +299,7 @@ where
         }
 
         if let Some(AttributeValue::Exprloc(expr)) = entry.attr_value(gimli::DW_AT_frame_base)? {
-            if let Some(expr) = compile_expression(&expr, unit.encoding(), None)? {
+            if let Some(expr) = compile_expression(&expr, unit.encoding(), None, isa)? {
                 current_frame_base.push(new_stack_len, expr);
             }
         }
@@ -343,6 +346,7 @@ where
             &mut pending_die_refs,
             &mut pending_di_refs,
             FileAttributeContext::Children(&file_map, current_frame_base.top()),
+            isa,
         )?;
 
         if entry.tag() == gimli::DW_TAG_subprogram && !current_scope_ranges.is_empty() {
@@ -352,8 +356,9 @@ where
                 vmctx_die_id,
                 addr_tr,
                 current_value_range.top(),
-                current_scope_ranges.top().expect("range"),
+                current_scope_ranges.top().context("range")?,
                 out_strings,
+                isa,
             )?;
         }
     }

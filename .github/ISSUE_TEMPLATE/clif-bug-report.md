@@ -1,7 +1,10 @@
 ---
-name: "Cranelift Bug report"
-about: "Report a bug or a crash in Cranelift."
-labels: 'bug'
+name: Cranelift Bug report
+about: Report a bug or a crash in Cranelift.
+title: 'Cranelift: '
+labels: bug, cranelift
+assignees: ''
+
 ---
 
 Thanks for opening a bug report! Please answer the questions below

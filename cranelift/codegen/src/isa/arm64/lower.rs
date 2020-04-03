@@ -1661,7 +1661,14 @@ fn lower_insn_to_regs<C: LowerCtx<Inst>>(ctx: &mut C, insn: IRInst) {
         | Opcode::Insertlane
         | Opcode::Extractlane
         | Opcode::RawBitcast
-        | Opcode::ScalarToVector => {
+        | Opcode::ScalarToVector
+        | Opcode::Swizzle
+        | Opcode::Uload8x8
+        | Opcode::Sload8x8
+        | Opcode::Uload16x4
+        | Opcode::Sload16x4
+        | Opcode::Uload32x2
+        | Opcode::Sload32x2 => {
             // TODO
             panic!("Vector ops not implemented.");
         }

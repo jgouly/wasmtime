@@ -3,12 +3,13 @@ use super::expression::{compile_expression, CompiledExpression, FunctionFrameInf
 use super::range_info_builder::RangeInfoBuilder;
 use super::refs::{PendingDebugInfoRefs, PendingUnitRefs};
 use super::{DebugInputContext, Reader, TransformError};
-use anyhow::Error;
+use anyhow::{bail, Error};
 use gimli::{write, AttributeValue, DebugLineOffset, DebugStr, DebuggingInformationEntry};
+use wasmtime_environ::isa::TargetIsa;
 
 pub(crate) enum FileAttributeContext<'a> {
     Root(Option<DebugLineOffset>),
-    Children(&'a Vec<write::FileId>, Option<&'a CompiledExpression>),
+    Children(&'a Vec<write::FileId>, Option<&'a CompiledExpression<'a>>),
 }
 
 fn is_exprloc_to_loclist_allowed(attr_name: gimli::constants::DwAt) -> bool {
@@ -41,6 +42,7 @@ pub(crate) fn clone_die_attributes<'a, R>(
     pending_die_refs: &mut PendingUnitRefs,
     pending_di_refs: &mut PendingDebugInfoRefs,
     file_context: FileAttributeContext<'a>,
+    isa: &dyn TargetIsa,
 ) -> Result<(), Error>
 where
     R: Reader,
@@ -130,7 +132,9 @@ where
                 };
                 let mut result = None;
                 while let Some(loc) = locs.next()? {
-                    if let Some(expr) = compile_expression(&loc.data, unit_encoding, frame_base)? {
+                    if let Some(expr) =
+                        compile_expression(&loc.data, unit_encoding, frame_base, isa)?
+                    {
                         if result.is_none() {
                             result = Some(Vec::new());
                         }
@@ -139,7 +143,7 @@ where
                             addr_tr,
                             frame_info,
                             endian,
-                        ) {
+                        )? {
                             if len == 0 {
                                 // Ignore empty range
                                 continue;
@@ -168,7 +172,7 @@ where
                 } else {
                     None
                 };
-                if let Some(expr) = compile_expression(expr, unit_encoding, frame_base)? {
+                if let Some(expr) = compile_expression(expr, unit_encoding, frame_base, isa)? {
                     if expr.is_simple() {
                         if let Some(expr) = expr.build() {
                             write::AttributeValue::Exprloc(expr)
@@ -179,7 +183,7 @@ where
                         // Conversion to loclist is required.
                         if let Some(scope_ranges) = scope_ranges {
                             let exprs =
-                                expr.build_with_locals(scope_ranges, addr_tr, frame_info, endian);
+                                expr.build_with_locals(scope_ranges, addr_tr, frame_info, endian)?;
                             if exprs.is_empty() {
                                 continue;
                             }
@@ -248,7 +252,7 @@ where
                 pending_di_refs.insert(current_scope_id, attr.name(), offset);
                 continue;
             }
-            _ => panic!(), //write::AttributeValue::StringRef(out_strings.add("_")),
+            a => bail!("Unexpected attribute: {:?}", a),
         };
         let current_scope = out_unit.get_mut(current_scope_id);
         current_scope.set(attr.name(), attr_value);
@@ -261,7 +265,7 @@ pub(crate) fn clone_attr_string<R>(
     form: gimli::DwForm,
     debug_str: &DebugStr<R>,
     out_strings: &mut write::StringTable,
-) -> Result<write::LineString, gimli::Error>
+) -> Result<write::LineString, Error>
 where
     R: Reader,
 {
@@ -270,7 +274,7 @@ where
             debug_str.get_str(*str_offset)?.to_slice()?.to_vec()
         }
         AttributeValue::String(b) => b.to_slice()?.to_vec(),
-        _ => panic!("Unexpected attribute value"),
+        v => bail!("Unexpected attribute value: {:?}", v),
     };
     Ok(match form {
         gimli::DW_FORM_strp => {
@@ -278,6 +282,6 @@ where
             write::LineString::StringRef(id)
         }
         gimli::DW_FORM_string => write::LineString::String(content),
-        _ => panic!("DW_FORM_line_strp or other not supported"),
+        _ => bail!("DW_FORM_line_strp or other not supported"),
     })
 }

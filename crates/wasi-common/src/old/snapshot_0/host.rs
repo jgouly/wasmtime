@@ -5,11 +5,10 @@
 #![allow(non_snake_case)]
 
 use crate::old::snapshot_0::wasi::*;
-use crate::old::snapshot_0::{Error, Result};
 use std::{convert::TryInto, io, mem, slice};
 use wig::witx_host_types;
 
-witx_host_types!("old/snapshot_0" "wasi_unstable");
+witx_host_types!("phases/old/snapshot_0/witx/wasi_unstable.witx");
 
 pub(crate) unsafe fn ciovec_to_host(ciovec: &__wasi_ciovec_t) -> io::IoSlice {
     let slice = slice::from_raw_parts(ciovec.buf as *const u8, ciovec.buf_len);
@@ -52,11 +51,13 @@ pub(crate) struct Dirent {
 impl Dirent {
     /// Serialize the directory entry to the format define by `__wasi_fd_readdir`,
     /// so that the serialized entries can be concatenated by the implementation.
-    pub fn to_wasi_raw(&self) -> Result<Vec<u8>> {
+    pub fn to_wasi_raw(&self) -> WasiResult<Vec<u8>> {
         let name = self.name.as_bytes();
         let namlen = name.len();
         let dirent_size = mem::size_of::<__wasi_dirent_t>();
-        let offset = dirent_size.checked_add(namlen).ok_or(Error::EOVERFLOW)?;
+        let offset = dirent_size
+            .checked_add(namlen)
+            .ok_or(WasiError::EOVERFLOW)?;
 
         let mut raw = Vec::<u8>::with_capacity(offset);
         raw.resize(offset, 0);

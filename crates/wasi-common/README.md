@@ -42,7 +42,7 @@ We expect these to be implemented when network access is standardised.
 We also currently do not support the `proc_raise` hostcall, as it is expected to
 be dropped entirely from WASI.
 
-[WASI API]: https://github.com/bytecodealliance/wasmtime/blob/master/docs/WASI-api.md
+[WASI API]: https://github.com/WebAssembly/WASI/blob/master/phases/snapshot/docs.md
 
 ### Windows
 In our Windows implementation, we currently support the minimal subset of [WASI API]
@@ -60,10 +60,10 @@ rustup target add wasm32-wasi
 [rustup]: https://rustup.rs
 
 Now, you should be able to run the integration testsuite by running `cargo test` on the
-`test-programs` package with `test_programs` feature enabled:
+`test-programs` package with `test-programs/test_programs` feature enabled:
 
 ```
-cargo test --features test_programs --package test-programs
+cargo test --features test-programs/test_programs --package test-programs
 ```
 
 ## Third-Party Code

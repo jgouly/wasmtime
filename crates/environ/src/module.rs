@@ -5,13 +5,17 @@ use crate::WASM_MAX_PAGES;
 use cranelift_codegen::ir;
 use cranelift_entity::{EntityRef, PrimaryMap};
 use cranelift_wasm::{
-    DefinedFuncIndex, DefinedGlobalIndex, DefinedMemoryIndex, DefinedTableIndex, ElemIndex,
-    FuncIndex, Global, GlobalIndex, Memory, MemoryIndex, SignatureIndex, Table, TableIndex,
+    DataIndex, DefinedFuncIndex, DefinedGlobalIndex, DefinedMemoryIndex, DefinedTableIndex,
+    ElemIndex, FuncIndex, Global, GlobalIndex, Memory, MemoryIndex, SignatureIndex, Table,
+    TableIndex,
 };
 use indexmap::IndexMap;
 use more_asserts::assert_ge;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
+use std::sync::{
+    atomic::{AtomicUsize, Ordering::SeqCst},
+    Arc,
+};
 
 /// A WebAssembly table initializer.
 #[derive(Clone, Debug, Hash)]
@@ -137,6 +141,9 @@ pub struct Module {
     /// A unique identifier (within this process) for this module.
     pub id: usize,
 
+    /// The name of this wasm module, often found in the wasm file.
+    pub name: Option<String>,
+
     /// Local information about a module which is the bare minimum necessary to
     /// translate a function body. This is derived as `Hash` whereas this module
     /// isn't, since it contains too much information needed to translate a
@@ -167,6 +174,9 @@ pub struct Module {
 
     /// WebAssembly passive elements.
     pub passive_elements: HashMap<ElemIndex, Box<[FuncIndex]>>,
+
+    /// WebAssembly passive data segments.
+    pub passive_data: HashMap<DataIndex, Arc<[u8]>>,
 
     /// WebAssembly table initializers.
     pub func_names: HashMap<FuncIndex, String>,
@@ -215,6 +225,7 @@ impl Module {
 
         Self {
             id: NEXT_ID.fetch_add(1, SeqCst),
+            name: None,
             imported_funcs: PrimaryMap::new(),
             imported_tables: PrimaryMap::new(),
             imported_memories: PrimaryMap::new(),
@@ -223,6 +234,7 @@ impl Module {
             start_func: None,
             table_elements: Vec::new(),
             passive_elements: HashMap::new(),
+            passive_data: HashMap::new(),
             func_names: HashMap::new(),
             local: ModuleLocal {
                 num_imported_funcs: 0,

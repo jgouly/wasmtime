@@ -65,6 +65,7 @@ use crate::timing;
 use alloc::borrow::Cow;
 use alloc::boxed::Box;
 use core::fmt;
+use core::fmt::{Debug, Formatter};
 use target_lexicon::{triple, Architecture, PointerWidth, Triple};
 use thiserror::Error;
 
@@ -76,6 +77,12 @@ mod x64;
 
 #[cfg(feature = "x86")]
 mod x86;
+
+#[cfg(all(feature = "x86", feature = "unwind"))]
+/// Expose the register-mapping functionality necessary for exception handling, debug, etc.
+pub mod fde {
+    pub use super::x86::map_reg;
+}
 
 #[cfg(feature = "arm32")]
 mod arm32;
@@ -399,5 +406,16 @@ pub trait TargetIsa: fmt::Display + Send + Sync {
     /// Get the new-style MachBackend, if this is an adapter around one.
     fn get_mach_backend(&self) -> Option<&dyn MachBackend> {
         None
+    }
+}
+
+impl Debug for &dyn TargetIsa {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "TargetIsa {{ triple: {:?}, pointer_width: {:?}}}",
+            self.triple(),
+            self.pointer_width()
+        )
     }
 }

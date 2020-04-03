@@ -2,9 +2,9 @@ use crate::externals::Extern;
 use crate::module::Module;
 use crate::runtime::{Config, Store};
 use crate::trap::Trap;
-use anyhow::{Error, Result};
+use anyhow::{bail, Error, Result};
 use wasmtime_jit::{CompiledModule, Resolver};
-use wasmtime_runtime::{Export, InstanceHandle, InstantiationError};
+use wasmtime_runtime::{Export, InstanceHandle, InstantiationError, SignatureRegistry};
 
 struct SimpleResolver<'a> {
     imports: &'a [Extern],
@@ -22,6 +22,7 @@ fn instantiate(
     config: &Config,
     compiled_module: &CompiledModule,
     imports: &[Extern],
+    sig_registry: &SignatureRegistry,
 ) -> Result<InstanceHandle, Error> {
     let mut resolver = SimpleResolver { imports };
     unsafe {
@@ -29,6 +30,7 @@ fn instantiate(
             .instantiate(
                 config.validating_config.operator_config.enable_bulk_memory,
                 &mut resolver,
+                sig_registry,
             )
             .map_err(|e| -> Error {
                 match e {
@@ -112,27 +114,38 @@ impl Instance {
     /// [`ExternType`]: crate::ExternType
     pub fn new(module: &Module, imports: &[Extern]) -> Result<Instance, Error> {
         let store = module.store();
-        let config = store.engine().config();
-        let instance_handle = instantiate(config, module.compiled_module(), imports)?;
 
-        let exports = {
-            let mut exports = Vec::with_capacity(module.exports().len());
-            for export in module.exports() {
-                let name = export.name().to_string();
-                let export = instance_handle.lookup(&name).expect("export");
-                exports.push(Extern::from_wasmtime_export(
-                    store,
-                    instance_handle.clone(),
-                    export,
-                ));
+        // For now we have a restriction that the `Store` that we're working
+        // with is the same for everything involved here.
+        for import in imports {
+            if !import.comes_from_same_store(store) {
+                bail!("cross-`Store` instantiation is not currently supported");
             }
-            exports.into_boxed_slice()
-        };
+        }
+
         module.register_frame_info();
+        let config = store.engine().config();
+        let instance_handle = instantiate(
+            config,
+            module.compiled_module(),
+            imports,
+            store.compiler().signatures(),
+        )?;
+
+        let mut exports = Vec::with_capacity(module.exports().len());
+        for export in module.exports() {
+            let name = export.name().to_string();
+            let export = instance_handle.lookup(&name).expect("export");
+            exports.push(Extern::from_wasmtime_export(
+                store,
+                instance_handle.clone(),
+                export,
+            ));
+        }
         Ok(Instance {
             instance_handle,
             module: module.clone(),
-            exports,
+            exports: exports.into_boxed_slice(),
         })
     }
 

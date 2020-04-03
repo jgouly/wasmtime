@@ -10,7 +10,7 @@ use gimli::{
 };
 use std::collections::HashSet;
 use thiserror::Error;
-use wasmtime_environ::isa::TargetFrontendConfig;
+use wasmtime_environ::isa::TargetIsa;
 use wasmtime_environ::{ModuleAddressMap, ModuleVmctxInfo, ValueLabelsRanges};
 
 pub use address_transform::AddressTransform;
@@ -47,7 +47,7 @@ where
 }
 
 pub fn transform_dwarf(
-    target_config: TargetFrontendConfig,
+    isa: &dyn TargetIsa,
     di: &DebugInfoData,
     at: &ModuleAddressMap,
     vmctx_info: &ModuleVmctxInfo,
@@ -69,9 +69,8 @@ pub fn transform_dwarf(
     let out_encoding = gimli::Encoding {
         format: gimli::Format::Dwarf32,
         // TODO: this should be configurable
-        // macOS doesn't seem to support DWARF > 3
-        version: 3,
-        address_size: target_config.pointer_bytes(),
+        version: 4,
+        address_size: isa.pointer_bytes(),
     };
 
     let mut out_strings = write::StringTable::default();
@@ -95,6 +94,7 @@ pub fn transform_dwarf(
             &mut out_units,
             &mut out_strings,
             &mut translated,
+            isa,
         )? {
             di_ref_map.insert(&header, id, ref_map);
             pending_di_refs.push((id, pending_refs));
@@ -111,6 +111,7 @@ pub fn transform_dwarf(
         out_encoding,
         &mut out_units,
         &mut out_strings,
+        isa,
     )?;
 
     Ok(write::Dwarf {

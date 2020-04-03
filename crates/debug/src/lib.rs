@@ -2,17 +2,19 @@
 
 #![allow(clippy::cast_ptr_alignment)]
 
+use crate::frame::get_debug_frame_bytes;
 use anyhow::Error;
 use faerie::{Artifact, Decl};
 use more_asserts::assert_gt;
-use target_lexicon::{BinaryFormat, Triple};
-use wasmtime_environ::isa::TargetFrontendConfig;
-use wasmtime_environ::{ModuleAddressMap, ModuleVmctxInfo, ValueLabelsRanges};
+use target_lexicon::BinaryFormat;
+use wasmtime_environ::isa::TargetIsa;
+use wasmtime_environ::{FrameLayouts, ModuleAddressMap, ModuleVmctxInfo, ValueLabelsRanges};
 
 pub use crate::read_debuginfo::{read_debuginfo, DebugInfoData, WasmFileInfo};
 pub use crate::transform::transform_dwarf;
 pub use crate::write_debuginfo::{emit_dwarf, ResolvedSymbol, SymbolResolver};
 
+mod frame;
 mod gc;
 mod read_debuginfo;
 mod transform;
@@ -29,14 +31,25 @@ impl SymbolResolver for FunctionRelocResolver {
 pub fn emit_debugsections(
     obj: &mut Artifact,
     vmctx_info: &ModuleVmctxInfo,
-    target_config: TargetFrontendConfig,
+    isa: &dyn TargetIsa,
     debuginfo_data: &DebugInfoData,
     at: &ModuleAddressMap,
     ranges: &ValueLabelsRanges,
+    frame_layouts: &FrameLayouts,
 ) -> Result<(), Error> {
     let resolver = FunctionRelocResolver {};
-    let dwarf = transform_dwarf(target_config, debuginfo_data, at, vmctx_info, ranges)?;
-    emit_dwarf(obj, dwarf, &resolver)?;
+    let dwarf = transform_dwarf(isa, debuginfo_data, at, vmctx_info, ranges)?;
+
+    let max = at.values().map(|v| v.body_len).fold(0, usize::max);
+    let mut funcs_bodies = Vec::with_capacity(max as usize);
+    funcs_bodies.resize(max as usize, 0);
+    let funcs = at
+        .values()
+        .map(|v| (::std::ptr::null(), v.body_len))
+        .collect::<Vec<(*const u8, usize)>>();
+    let frames = get_debug_frame_bytes(&funcs, isa, frame_layouts)?;
+
+    emit_dwarf(obj, dwarf, &resolver, frames)?;
     Ok(())
 }
 
@@ -52,21 +65,21 @@ impl<'a> SymbolResolver for ImageRelocResolver<'a> {
 }
 
 pub fn emit_debugsections_image(
-    triple: Triple,
-    target_config: TargetFrontendConfig,
+    isa: &dyn TargetIsa,
     debuginfo_data: &DebugInfoData,
     vmctx_info: &ModuleVmctxInfo,
     at: &ModuleAddressMap,
     ranges: &ValueLabelsRanges,
+    frame_layouts: &FrameLayouts,
     funcs: &[(*const u8, usize)],
 ) -> Result<Vec<u8>, Error> {
     let func_offsets = &funcs
         .iter()
         .map(|(ptr, _)| *ptr as u64)
         .collect::<Vec<u64>>();
-    let mut obj = Artifact::new(triple, String::from("module"));
+    let mut obj = Artifact::new(isa.triple().clone(), String::from("module"));
     let resolver = ImageRelocResolver { func_offsets };
-    let dwarf = transform_dwarf(target_config, debuginfo_data, at, vmctx_info, ranges)?;
+    let dwarf = transform_dwarf(isa, debuginfo_data, at, vmctx_info, ranges)?;
 
     // Assuming all functions in the same code block, looking min/max of its range.
     assert_gt!(funcs.len(), 0);
@@ -80,7 +93,8 @@ pub fn emit_debugsections_image(
     let body = unsafe { std::slice::from_raw_parts(segment_body.0, segment_body.1) };
     obj.declare_with("all", Decl::function(), body.to_vec())?;
 
-    emit_dwarf(&mut obj, dwarf, &resolver)?;
+    let frames = get_debug_frame_bytes(funcs, isa, frame_layouts)?;
+    emit_dwarf(&mut obj, dwarf, &resolver, frames)?;
 
     // LLDB is too "magical" about mach-o, generating elf
     let mut bytes = obj.emit_as(BinaryFormat::Elf)?;
