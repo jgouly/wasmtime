@@ -611,6 +611,8 @@ impl<O: MachSectionOutput> MachInstEmit<O> for Inst {
                 }
             }
             &Inst::Mov { rd, rm } => {
+                assert!(rd.to_reg().get_class() == rm.get_class());
+                assert!(rm.get_class() == RegClass::I64);
                 // Encoded as ORR rd, rm, zero.
                 sink.put4(enc_arith_rrr(0b10101010_000, 0b000_000, rd, zero_reg(), rm));
             }
@@ -625,6 +627,27 @@ impl<O: MachSectionOutput> MachInstEmit<O> for Inst {
             }
             &Inst::CSet { rd, cond } => {
                 sink.put4(enc_cset(rd, cond));
+            }
+            &Inst::FpuMove64 { rd, rn } => {
+                unimplemented!()
+            }
+            &Inst::FpuRR { fpu_op, rd, rn } => {
+                unimplemented!()
+            }
+            &Inst::FpuRRR { fpu_op, rd, rn, rm } => {
+                unimplemented!()
+            }
+            &Inst::FpuLoad32 { rd, ref mem } => {
+                unimplemented!()
+            }
+            &Inst::FpuLoad64 { rd, ref mem } => {
+                unimplemented!()
+            }
+            &Inst::FpuStore32 { rd, ref mem } => {
+                unimplemented!()
+            }
+            &Inst::FpuStore64 { rd, ref mem } => {
+                unimplemented!()
             }
             &Inst::MovToVec64 { rd, rn } => {
                 sink.put4(
@@ -839,7 +862,7 @@ impl<O: MachSectionOutput> MachInstEmit<O> for Inst {
 
                 // Save index in a tmp (the live range of ridx only goes to start of this
                 // sequence; rtmp1 or rtmp2 may overwrite it).
-                let inst = Inst::gen_move(rtmp2, ridx);
+                let inst = Inst::gen_move(rtmp2, ridx, I64);
                 inst.emit(sink);
                 // Load address of jump table
                 let inst = Inst::Adr {

@@ -79,6 +79,34 @@ pub enum ALUOp {
     Lsl64,
 }
 
+/// A floating-point unit (FPU) operation with one arg.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum FPUOp1 {
+    Abs32,
+    Abs64,
+    Neg32,
+    Neg64,
+    Sqrt32,
+    Sqrt64,
+    Cvt32To64,
+    Cvt64To32,
+}
+
+/// A floating-point unit (FPU) operation with two args.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum FPUOp2 {
+    Add32,
+    Add64,
+    Sub32,
+    Sub64,
+    Mul32,
+    Mul64,
+    Max32,
+    Max64,
+    Min32,
+    Min64,
+}
+
 /// A vector ALU operation.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum VecALUOp {
@@ -209,17 +237,35 @@ pub enum Inst {
     },
 
     /// An unsigned (zero-extending) 8-bit load.
-    ULoad8 { rd: Writable<Reg>, mem: MemArg },
+    ULoad8 {
+        rd: Writable<Reg>,
+        mem: MemArg,
+    },
     /// A signed (sign-extending) 8-bit load.
-    SLoad8 { rd: Writable<Reg>, mem: MemArg },
+    SLoad8 {
+        rd: Writable<Reg>,
+        mem: MemArg,
+    },
     /// An unsigned (zero-extending) 16-bit load.
-    ULoad16 { rd: Writable<Reg>, mem: MemArg },
+    ULoad16 {
+        rd: Writable<Reg>,
+        mem: MemArg,
+    },
     /// A signed (sign-extending) 16-bit load.
-    SLoad16 { rd: Writable<Reg>, mem: MemArg },
+    SLoad16 {
+        rd: Writable<Reg>,
+        mem: MemArg,
+    },
     /// An unsigned (zero-extending) 32-bit load.
-    ULoad32 { rd: Writable<Reg>, mem: MemArg },
+    ULoad32 {
+        rd: Writable<Reg>,
+        mem: MemArg,
+    },
     /// A signed (sign-extending) 32-bit load.
-    SLoad32 { rd: Writable<Reg>, mem: MemArg },
+    SLoad32 {
+        rd: Writable<Reg>,
+        mem: MemArg,
+    },
     /// A 64-bit load.
     ULoad64 {
         rd: Writable<Reg>,
@@ -228,11 +274,20 @@ pub enum Inst {
     },
 
     /// An 8-bit store.
-    Store8 { rd: Reg, mem: MemArg },
+    Store8 {
+        rd: Reg,
+        mem: MemArg,
+    },
     /// A 16-bit store.
-    Store16 { rd: Reg, mem: MemArg },
+    Store16 {
+        rd: Reg,
+        mem: MemArg,
+    },
     /// A 32-bit store.
-    Store32 { rd: Reg, mem: MemArg },
+    Store32 {
+        rd: Reg,
+        mem: MemArg,
+    },
     /// A 64-bit store.
     Store64 {
         rd: Reg,
@@ -241,7 +296,11 @@ pub enum Inst {
     },
 
     /// A store of a pair of registers.
-    StoreP64 { rt: Reg, rt2: Reg, mem: PairMemArg },
+    StoreP64 {
+        rt: Reg,
+        rt2: Reg,
+        mem: PairMemArg,
+    },
     /// A load of a pair of registers.
     LoadP64 {
         rt: Writable<Reg>,
@@ -252,11 +311,17 @@ pub enum Inst {
     /// A MOV instruction. These are encoded as ORR's (AluRRR form) but we
     /// keep them separate at the `Inst` level for better pretty-printing
     /// and faster `is_move()` logic.
-    Mov { rd: Writable<Reg>, rm: Reg },
+    Mov {
+        rd: Writable<Reg>,
+        rm: Reg,
+    },
 
     /// A 32-bit MOV. Zeroes the top 32 bits of the destination. This is
     /// effectively an alias for an unsigned 32-to-64-bit extension.
-    Mov32 { rd: Writable<Reg>, rm: Reg },
+    Mov32 {
+        rd: Writable<Reg>,
+        rm: Reg,
+    },
 
     /// A MOVZ with a 16-bit immediate.
     MovZ {
@@ -288,13 +353,62 @@ pub enum Inst {
     },
 
     /// A conditional-set operation.
-    CSet { rd: Writable<Reg>, cond: Cond },
+    CSet {
+        rd: Writable<Reg>,
+        cond: Cond,
+    },
+
+    /// FPU move. Note that this is distinct from a vector-register
+    /// move; moving just 64 bits seems to be significantly faster.
+    FpuMove64 {
+        rd: Writable<Reg>,
+        rn: Reg,
+    },
+
+    /// 1-op FPU instruction.
+    FpuRR {
+        fpu_op: FPUOp1,
+        rd: Writable<Reg>,
+        rn: Reg,
+    },
+
+    /// 2-op FPU instruction.
+    FpuRRR {
+        fpu_op: FPUOp2,
+        rd: Writable<Reg>,
+        rn: Reg,
+        rm: Reg,
+    },
+
+    /// Floating-point loads and stores.
+    FpuLoad32 {
+        rd: Writable<Reg>,
+        mem: MemArg,
+    },
+    FpuStore32 {
+        rd: Reg,
+        mem: MemArg,
+    },
+    FpuLoad64 {
+        rd: Writable<Reg>,
+        mem: MemArg,
+    },
+    FpuStore64 {
+        rd: Reg,
+        mem: MemArg,
+    },
 
     /// Move to a vector register from a GPR.
-    MovToVec64 { rd: Writable<Reg>, rn: Reg },
+    MovToVec64 {
+        rd: Writable<Reg>,
+        rn: Reg,
+    },
 
     /// Move to a GPR from a vector register.
-    MovFromVec64 { rd: Writable<Reg>, rn: Reg },
+    MovFromVec64 {
+        rd: Writable<Reg>,
+        rn: Reg,
+    },
 
     /// A vector ALU op.
     VecRRR {
@@ -305,13 +419,20 @@ pub enum Inst {
     },
 
     /// Move to the NZCV flags (actually a `MSR NZCV, Xn` insn).
-    MovToNZCV { rn: Reg },
+    MovToNZCV {
+        rn: Reg,
+    },
 
     /// Move from the NZCV flags (actually a `MRS Xn, NZCV` insn).
-    MovFromNZCV { rd: Writable<Reg> },
+    MovFromNZCV {
+        rd: Writable<Reg>,
+    },
 
     /// Set a register to 1 if condition, else 0.
-    CondSet { rd: Writable<Reg>, cond: Cond },
+    CondSet {
+        rd: Writable<Reg>,
+        cond: Cond,
+    },
 
     /// A machine call instruction.
     Call {
@@ -335,7 +456,9 @@ pub enum Inst {
     EpiloguePlaceholder {},
 
     /// An unconditional branch.
-    Jump { dest: BranchTarget },
+    Jump {
+        dest: BranchTarget,
+    },
 
     /// A conditional branch.
     CondBr {
@@ -363,7 +486,10 @@ pub enum Inst {
 
     /// An indirect branch through a register, augmented with set of all
     /// possible successors.
-    IndirectBr { rn: Reg, targets: Vec<BlockIndex> },
+    IndirectBr {
+        rn: Reg,
+        targets: Vec<BlockIndex>,
+    },
 
     /// A "break" instruction, used for e.g. traps and debug breakpoints.
     Brk {
@@ -372,13 +498,20 @@ pub enum Inst {
 
     /// Load the address (using a PC-relative offset) of a MemLabel, using the
     /// `ADR` instruction.
-    Adr { rd: Writable<Reg>, label: MemLabel },
+    Adr {
+        rd: Writable<Reg>,
+        label: MemLabel,
+    },
 
     /// Raw 32-bit word, used for inline constants and jump-table entries.
-    Word4 { data: u32 },
+    Word4 {
+        data: u32,
+    },
 
     /// Raw 64-bit word, used for inline constants.
-    Word8 { data: u64 },
+    Word8 {
+        data: u64,
+    },
 
     /// Jump-table sequence, as one compound instruction (see note in lower.rs
     /// for rationale).
@@ -391,7 +524,10 @@ pub enum Inst {
     },
 
     /// Load an inline constant.
-    LoadConst64 { rd: Writable<Reg>, const_data: u64 },
+    LoadConst64 {
+        rd: Writable<Reg>,
+        const_data: u64,
+    },
 
     /// Load an inline symbol reference.
     LoadExtName {
@@ -404,9 +540,17 @@ pub enum Inst {
 impl Inst {
     /// Create a move instruction.
     pub fn mov(to_reg: Writable<Reg>, from_reg: Reg) -> Inst {
-        Inst::Mov {
-            rd: to_reg,
-            rm: from_reg,
+        assert!(to_reg.to_reg().get_class() == from_reg.get_class());
+        if from_reg.get_class() == RegClass::I64 {
+            Inst::Mov {
+                rd: to_reg,
+                rm: from_reg,
+            }
+        } else {
+            Inst::FpuMove64 {
+                rd: to_reg,
+                rn: from_reg,
+            }
         }
     }
 
@@ -586,6 +730,35 @@ fn arm64_get_regs(inst: &Inst) -> InstRegUses {
         }
         &Inst::CSet { rd, .. } => {
             iru.defined.insert(rd);
+        }
+        &Inst::FpuMove64 { rd, rn } => {
+            iru.defined.insert(rd);
+            iru.used.insert(rn);
+        }
+        &Inst::FpuRR { rd, rn, .. } => {
+            iru.defined.insert(rd);
+            iru.used.insert(rn);
+        }
+        &Inst::FpuRRR { rd, rn, rm, .. } => {
+            iru.defined.insert(rd);
+            iru.used.insert(rn);
+            iru.used.insert(rm);
+        }
+        &Inst::FpuLoad32 { rd, ref mem } => {
+            iru.defined.insert(rd);
+            memarg_regs(mem, &mut iru.used, &mut iru.modified);
+        }
+        &Inst::FpuLoad64 { rd, ref mem } => {
+            iru.defined.insert(rd);
+            memarg_regs(mem, &mut iru.used, &mut iru.modified);
+        }
+        &Inst::FpuStore32 { rd, ref mem } => {
+            iru.used.insert(rd);
+            memarg_regs(mem, &mut iru.used, &mut iru.modified);
+        }
+        &Inst::FpuStore64 { rd, ref mem } => {
+            iru.used.insert(rd);
+            memarg_regs(mem, &mut iru.used, &mut iru.modified);
         }
         &Inst::MovToVec64 { rd, rn } => {
             iru.defined.insert(rd);
@@ -901,6 +1074,37 @@ fn arm64_map_regs(
             cond,
             rd: map_wr(d, rd),
         },
+        &mut Inst::FpuMove64 { rd, rn } => Inst::FpuMove64 {
+            rd: map_wr(d, rd),
+            rn: map(u, rn),
+        },
+        &mut Inst::FpuRR { fpu_op, rd, rn } => Inst::FpuRR {
+            fpu_op,
+            rd: map_wr(d, rd),
+            rn: map(u, rn),
+        },
+        &mut Inst::FpuRRR { fpu_op, rd, rn, rm } => Inst::FpuRRR {
+            fpu_op,
+            rd: map_wr(d, rd),
+            rn: map(u, rn),
+            rm: map(u, rm),
+        },
+        &mut Inst::FpuLoad32 { rd, ref mem } => Inst::FpuLoad32 {
+            rd: map_wr(d, rd),
+            mem: map_mem(u, mem),
+        },
+        &mut Inst::FpuLoad64 { rd, ref mem } => Inst::FpuLoad64 {
+            rd: map_wr(d, rd),
+            mem: map_mem(u, mem),
+        },
+        &mut Inst::FpuStore32 { rd, ref mem } => Inst::FpuStore32 {
+            rd: map(u, rd),
+            mem: map_mem(u, mem),
+        },
+        &mut Inst::FpuStore64 { rd, ref mem } => Inst::FpuStore64 {
+            rd: map(u, rd),
+            mem: map_mem(u, mem),
+        },
         &mut Inst::MovToVec64 { rd, rn } => Inst::MovToVec64 {
             rd: map_wr(d, rd),
             rn: map(u, rn),
@@ -1100,7 +1304,8 @@ impl MachInst for Inst {
         }
     }
 
-    fn gen_move(to_reg: Writable<Reg>, from_reg: Reg) -> Inst {
+    fn gen_move(to_reg: Writable<Reg>, from_reg: Reg, ty: Type) -> Inst {
+        assert!(ty.bits() <= 64); // no vector support yet!
         Inst::mov(to_reg, from_reg)
     }
 
@@ -1500,6 +1705,64 @@ impl ShowWithRRU for Inst {
                 let rd = rd.to_reg().show_rru(mb_rru);
                 let cond = cond.show_rru(mb_rru);
                 format!("cset {}, {}", rd, cond)
+            }
+            &Inst::FpuMove64 { rd, rn } => {
+                let rd = rd.to_reg().show_rru(mb_rru);
+                let rn = rn.show_rru(mb_rru);
+                format!("mov {}.8b, {}.8b", rd, rn)
+            }
+            &Inst::FpuRR { fpu_op, rd, rn } => {
+                let (op, is32src, is32dst) = match fpu_op {
+                    FPUOp1::Abs32 => ("fabs", true, true),
+                    FPUOp1::Abs64 => ("fabs", false, false),
+                    FPUOp1::Neg32 => ("fneg", true, true),
+                    FPUOp1::Neg64 => ("fneg", false, false),
+                    FPUOp1::Sqrt32 => ("fsqrt", true, true),
+                    FPUOp1::Sqrt64 => ("fsqrt", false, false),
+                    FPUOp1::Cvt32To64 => ("fcvt", true, false),
+                    FPUOp1::Cvt64To32 => ("fcvt", false, true),
+                };
+                let rd = show_freg_sized(rd.to_reg(), mb_rru, is32dst);
+                let rn = show_freg_sized(rn, mb_rru, is32src);
+                format!("{} {}, {}", op, rd, rn)
+            }
+            &Inst::FpuRRR { fpu_op, rd, rn, rm } => {
+                let (op, is32) = match fpu_op {
+                    FPUOp2::Add32 => ("fadd", true),
+                    FPUOp2::Add64 => ("fadd", false),
+                    FPUOp2::Sub32 => ("fsub", true),
+                    FPUOp2::Sub64 => ("fsub", false),
+                    FPUOp2::Mul32 => ("fmul", true),
+                    FPUOp2::Mul64 => ("fmul", false),
+                    FPUOp2::Max32 => ("fmax", true),
+                    FPUOp2::Max64 => ("fmax", false),
+                    FPUOp2::Min32 => ("fmin", true),
+                    FPUOp2::Min64 => ("fmin", false),
+                };
+                let rd = show_freg_sized(rd.to_reg(), mb_rru, is32);
+                let rn = show_freg_sized(rn, mb_rru, is32);
+                let rm = show_freg_sized(rm, mb_rru, is32);
+                format!("{} {}, {}, {}", op, rd, rn, rm)
+            }
+            &Inst::FpuLoad32 { rd, ref mem } => {
+                let rd = show_freg_sized(rd.to_reg(), mb_rru, /* is32 = */ true);
+                let mem = mem.show_rru_sized(mb_rru, /* size = */ 4);
+                format!("ldr {}, {}", rd, mem)
+            }
+            &Inst::FpuLoad64 { rd, ref mem } => {
+                let rd = show_freg_sized(rd.to_reg(), mb_rru, /* is32 = */ false);
+                let mem = mem.show_rru_sized(mb_rru, /* size = */ 8);
+                format!("ldr {}, {}", rd, mem)
+            }
+            &Inst::FpuStore32 { rd, ref mem } => {
+                let rd = show_freg_sized(rd, mb_rru, /* is32 = */ true);
+                let mem = mem.show_rru_sized(mb_rru, /* size = */ 4);
+                format!("str {}, {}", rd, mem)
+            }
+            &Inst::FpuStore64 { rd, ref mem } => {
+                let rd = show_freg_sized(rd, mb_rru, /* is32 = */ false);
+                let mem = mem.show_rru_sized(mb_rru, /* size = */ 8);
+                format!("str {}, {}", rd, mem)
             }
             &Inst::MovToVec64 { rd, rn } => {
                 let rd = rd.to_reg().show_rru(mb_rru);

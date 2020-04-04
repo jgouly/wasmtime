@@ -166,7 +166,7 @@ pub trait MachInst: Clone + Debug {
     fn is_spill(&self) -> Option<(SpillSlot, Reg)>;
 
     /// Generate a move.
-    fn gen_move(to_reg: Writable<Reg>, from_reg: Reg) -> Self;
+    fn gen_move(to_reg: Writable<Reg>, from_reg: Reg, ty: Type) -> Self;
 
     /// Generate a zero-length no-op.
     fn gen_zero_len_nop() -> Self;

@@ -617,8 +617,9 @@ impl<I: VCodeInst> RegallocFunction for VCode<I> {
         self.abi.gen_reload(to_reg, from_slot, ty)
     }
 
-    fn gen_move(&self, to_reg: Writable<RealReg>, from_reg: RealReg, _vreg: VirtualReg) -> I {
-        I::gen_move(to_reg.map(|r| r.to_reg()), from_reg.to_reg())
+    fn gen_move(&self, to_reg: Writable<RealReg>, from_reg: RealReg, vreg: VirtualReg) -> I {
+        let ty = self.vreg_type(vreg);
+        I::gen_move(to_reg.map(|r| r.to_reg()), from_reg.to_reg(), ty)
     }
 
     fn gen_zero_len_nop(&self) -> I {

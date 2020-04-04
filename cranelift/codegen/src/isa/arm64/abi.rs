@@ -22,7 +22,7 @@ use log::debug;
 #[derive(Clone, Debug)]
 enum ABIArg {
     // In a real register.
-    Reg(RealReg),
+    Reg(RealReg, ir::Type),
     // Arguments only: on stack, at given offset from SP at entry.
     Stack(i64, ir::Type),
     // (first and only) return value only: in memory pointed to by x8 on entry.
@@ -59,7 +59,7 @@ fn compute_arg_locs(params: &[ir::AbiParam]) -> (Vec<ABIArg>, i64) {
 
         if in_int_reg(param.value_type) {
             if next_xreg < 8 {
-                ret.push(ABIArg::Reg(xreg(next_xreg).to_real_reg()));
+                ret.push(ABIArg::Reg(xreg(next_xreg).to_real_reg(), param.value_type));
                 next_xreg += 1;
             } else {
                 ret.push(ABIArg::Stack(next_stack as i64, param.value_type));
@@ -67,7 +67,7 @@ fn compute_arg_locs(params: &[ir::AbiParam]) -> (Vec<ABIArg>, i64) {
             }
         } else if in_vec_reg(param.value_type) {
             if next_vreg < 8 {
-                ret.push(ABIArg::Reg(vreg(next_vreg).to_real_reg()));
+                ret.push(ABIArg::Reg(vreg(next_vreg).to_real_reg(), param.value_type));
                 next_vreg += 1;
             } else {
                 let size: u64 = match param.value_type {
@@ -275,7 +275,7 @@ impl ABIBody<Inst> for ARM64ABIBody {
     fn liveins(&self) -> Set<RealReg> {
         let mut set: Set<RealReg> = Set::empty();
         for arg in &self.sig.args {
-            if let &ABIArg::Reg(r) = arg {
+            if let &ABIArg::Reg(r, _) = arg {
                 set.insert(r);
             }
         }
@@ -285,7 +285,7 @@ impl ABIBody<Inst> for ARM64ABIBody {
     fn liveouts(&self) -> Set<RealReg> {
         let mut set: Set<RealReg> = Set::empty();
         for ret in &self.sig.rets {
-            if let &ABIArg::Reg(r) = ret {
+            if let &ABIArg::Reg(r, _) = ret {
                 set.insert(r);
             }
         }
@@ -306,7 +306,7 @@ impl ABIBody<Inst> for ARM64ABIBody {
 
     fn gen_copy_arg_to_reg(&self, idx: usize, into_reg: Writable<Reg>) -> Inst {
         match &self.sig.args[idx] {
-            &ABIArg::Reg(r) => Inst::gen_move(into_reg, r.to_reg()),
+            &ABIArg::Reg(r, ty) => Inst::gen_move(into_reg, r.to_reg(), ty),
             &ABIArg::Stack(off, ty) => load_stack(off + 16, into_reg, ty, None),
             _ => unimplemented!(),
         }
@@ -314,7 +314,7 @@ impl ABIBody<Inst> for ARM64ABIBody {
 
     fn gen_copy_reg_to_retval(&self, idx: usize, from_reg: Reg) -> Inst {
         match &self.sig.rets[idx] {
-            &ABIArg::Reg(r) => Inst::gen_move(Writable::from_reg(r.to_reg()), from_reg),
+            &ABIArg::Reg(r, ty) => Inst::gen_move(Writable::from_reg(r.to_reg()), from_reg, ty),
             &ABIArg::Stack(off, ty) => store_stack(off + 16, from_reg, ty, None),
             _ => unimplemented!(),
         }
@@ -564,7 +564,7 @@ fn abisig_to_uses_and_defs(sig: &ABISig) -> (Set<Reg>, Set<Writable<Reg>>) {
     let mut uses = Set::empty();
     for arg in &sig.args {
         match arg {
-            &ABIArg::Reg(reg) => uses.insert(reg.to_reg()),
+            &ABIArg::Reg(reg, _) => uses.insert(reg.to_reg()),
             _ => {}
         }
     }
@@ -573,7 +573,7 @@ fn abisig_to_uses_and_defs(sig: &ABISig) -> (Set<Reg>, Set<Writable<Reg>>) {
     let mut defs = get_caller_saves_set();
     for ret in &sig.rets {
         match ret {
-            &ABIArg::Reg(reg) => defs.insert(Writable::from_reg(reg.to_reg())),
+            &ABIArg::Reg(reg, _) => defs.insert(Writable::from_reg(reg.to_reg())),
             _ => {}
         }
     }
@@ -653,7 +653,7 @@ impl ABICall<Inst> for ARM64ABICall {
 
     fn gen_copy_reg_to_arg(&self, idx: usize, from_reg: Reg) -> Inst {
         match &self.sig.args[idx] {
-            &ABIArg::Reg(reg) => Inst::gen_move(Writable::from_reg(reg.to_reg()), from_reg),
+            &ABIArg::Reg(reg, ty) => Inst::gen_move(Writable::from_reg(reg.to_reg()), from_reg, ty),
             &ABIArg::Stack(off, _) => Inst::Store64 {
                 rd: from_reg,
                 mem: MemArg::SPOffset(off),
@@ -665,7 +665,7 @@ impl ABICall<Inst> for ARM64ABICall {
 
     fn gen_copy_retval_to_reg(&self, idx: usize, into_reg: Writable<Reg>) -> Inst {
         match &self.sig.rets[idx] {
-            &ABIArg::Reg(reg) => Inst::gen_move(into_reg, reg.to_reg()),
+            &ABIArg::Reg(reg, ty) => Inst::gen_move(into_reg, reg.to_reg(), ty),
             &ABIArg::RetMem(..) => panic!("Return-memory area not yet supported"),
             _ => unimplemented!(),
         }

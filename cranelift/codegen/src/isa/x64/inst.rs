@@ -2468,7 +2468,7 @@ impl MachInst for Inst {
         }
     }
 
-    fn gen_move(dst_reg: Writable<Reg>, src_reg: Reg) -> Inst {
+    fn gen_move(dst_reg: Writable<Reg>, src_reg: Reg, _ty: Type) -> Inst {
         let rcD = dst_reg.to_reg().get_class();
         let rcS = src_reg.get_class();
         // If this isn't true, we have gone way off the rails

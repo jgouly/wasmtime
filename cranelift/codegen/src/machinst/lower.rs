@@ -420,8 +420,8 @@ impl<'a, I: VCodeInst> Lower<'a, I> {
                 .collect();
 
             // FIXME sewardj 2020Feb29: use SmallVec
-            let mut src_regs = Vec::<Reg>::new();
-            let mut dst_regs = Vec::<Writable<Reg>>::new();
+            let mut src_regs = vec![];
+            let mut dst_regs = vec![];
 
             // Create all of the phi uses (reads) from jump args to temps.
 
@@ -436,6 +436,7 @@ impl<'a, I: VCodeInst> Lower<'a, I> {
                 dst_regs.push(Writable::from_reg(self.value_regs[*param]));
             }
             debug_assert!(src_regs.len() == dst_regs.len());
+            debug_assert!(phi_classes.len() == dst_regs.len());
 
             // If, as is mostly the case, the source and destination register
             // sets are non overlapping, then we can copy directly, so as to
@@ -443,25 +444,32 @@ impl<'a, I: VCodeInst> Lower<'a, I> {
             if !Set::<Reg>::from_vec(src_regs.clone()).intersects(&Set::<Reg>::from_vec(
                 dst_regs.iter().map(|r| r.to_reg()).collect(),
             )) {
-                for (dst_reg, src_reg) in dst_regs.iter().zip(src_regs) {
-                    self.vcode.push(I::gen_move(*dst_reg, src_reg));
+                for (dst_reg, (src_reg, (ty, _))) in
+                    dst_regs.iter().zip(src_regs.iter().zip(phi_classes))
+                {
+                    self.vcode.push(I::gen_move(*dst_reg, *src_reg, ty));
                 }
             } else {
                 // There's some overlap, so play safe and copy via temps.
 
                 let tmp_regs: Vec<Writable<Reg>> = phi_classes
-                    .into_iter()
-                    .map(|(ty, rc)| self.tmp(rc, ty)) // borrows `self` mutably.
+                    .iter()
+                    .map(|&(ty, rc)| self.tmp(rc, ty)) // borrows `self` mutably.
                     .collect();
 
                 debug!("phi_temps = {:?}", tmp_regs);
                 debug_assert!(tmp_regs.len() == src_regs.len());
 
-                for (tmp_reg, src_reg) in tmp_regs.iter().zip(src_regs) {
-                    self.vcode.push(I::gen_move(*tmp_reg, src_reg));
+                for (tmp_reg, (src_reg, &(ty, _))) in
+                    tmp_regs.iter().zip(src_regs.iter().zip(phi_classes.iter()))
+                {
+                    self.vcode.push(I::gen_move(*tmp_reg, *src_reg, ty));
                 }
-                for (dst_reg, tmp_reg) in dst_regs.iter().zip(tmp_regs) {
-                    self.vcode.push(I::gen_move(*dst_reg, tmp_reg.to_reg()));
+                for (dst_reg, (tmp_reg, &(ty, _))) in
+                    dst_regs.iter().zip(tmp_regs.iter().zip(phi_classes.iter()))
+                {
+                    self.vcode
+                        .push(I::gen_move(*dst_reg, tmp_reg.to_reg(), ty));
                 }
             }
 

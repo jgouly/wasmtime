@@ -240,6 +240,16 @@ pub fn show_ireg_sized(reg: Reg, mb_rru: Option<&RealRegUniverse>, is32: bool) -
     s
 }
 
+/// Show a vector register when its use as a 32-bit or 64-bit float is known.
+pub fn show_freg_sized(reg: Reg, mb_rru: Option<&RealRegUniverse>, is32: bool) -> String {
+    let s = reg.show_rru(mb_rru);
+    if reg.get_class() != RegClass::V128 {
+        return s;
+    }
+    let prefix = if is32 { "s" } else { "d" };
+    prefix.to_string() + &s[1..]
+}
+
 /// Show a vector register used in a scalar context.
 pub fn show_vreg_scalar(reg: Reg, mb_rru: Option<&RealRegUniverse>) -> String {
     let mut s = reg.show_rru(mb_rru);
