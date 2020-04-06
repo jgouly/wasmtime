@@ -256,7 +256,7 @@ fn get_callee_saves(regs: Vec<Writable<RealReg>>) -> Vec<Writable<RealReg>> {
 
 fn get_caller_saves_set() -> Set<Writable<Reg>> {
     let mut set = Set::empty();
-    for i in 0..28 {
+    for i in 0..29 {
         let x = writable_xreg(i);
         if is_caller_save(x.to_reg().to_real_reg()) {
             set.insert(x);
