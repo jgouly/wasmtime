@@ -242,6 +242,24 @@ fn enc_cset(rd: Writable<Reg>, cond: Cond) -> u32 {
         | (cond.invert().bits() << 12)
 }
 
+fn enc_vecmov(is_16b: bool, rd: Writable<Reg>, rn: Reg) -> u32 {
+    0b00001110_101_00000_00011_1_00000_00000
+        | machreg_to_vec(rd.to_reg())
+        | (machreg_to_vec(rn) << 16)
+        | (machreg_to_vec(rn) << 5)
+}
+
+fn enc_fpurr(top22: u32, rd: Writable<Reg>, rn: Reg) -> u32 {
+    (top22 << 10) | (machreg_to_vec(rn) << 5) | machreg_to_vec(rd.to_reg())
+}
+
+fn enc_fpurrr(top22: u32, rd: Writable<Reg>, rn: Reg, rm: Reg) -> u32 {
+    (top22 << 10)
+        | (machreg_to_vec(rm) << 16)
+        | (machreg_to_vec(rn) << 5)
+        | machreg_to_vec(rd.to_reg())
+}
+
 impl<O: MachSectionOutput> MachInstEmit<O> for Inst {
     fn emit(&self, sink: &mut O) {
         match self {
@@ -629,26 +647,44 @@ impl<O: MachSectionOutput> MachInstEmit<O> for Inst {
                 sink.put4(enc_cset(rd, cond));
             }
             &Inst::FpuMove64 { rd, rn } => {
-                unimplemented!()
+                sink.put4(enc_vecmov(/* 16b = */ false, rd, rn));
             }
             &Inst::FpuRR { fpu_op, rd, rn } => {
-                unimplemented!()
+                let top22 = match fpu_op {
+                    FPUOp1::Abs32 => 0b000_11110_00_1_000001_10000,
+                    FPUOp1::Abs64 => 0b000_11110_01_1_000001_10000,
+                    FPUOp1::Neg32 => 0b000_11110_00_1_000010_10000,
+                    FPUOp1::Neg64 => 0b000_11110_01_1_000010_10000,
+                    FPUOp1::Sqrt32 => 0b000_11110_00_1_000011_10000,
+                    FPUOp1::Sqrt64 => 0b000_11110_01_1_000011_10000,
+                    FPUOp1::Cvt32To64 => 0b000_11110_00_1_000101_10000,
+                    FPUOp1::Cvt64To32 => 0b000_11110_01_1_000100_10000,
+                };
+                sink.put4(enc_fpurr(top22, rd, rn));
             }
             &Inst::FpuRRR { fpu_op, rd, rn, rm } => {
-                unimplemented!()
+                let top22 = match fpu_op {
+                    FPUOp2::Add32 => 0b000_11110_00_1_00000_001010,
+                    FPUOp2::Add64 => 0b000_11110_01_1_00000_001010,
+                    FPUOp2::Sub32 => 0b000_11110_00_1_00000_001110,
+                    FPUOp2::Sub64 => 0b000_11110_01_1_00000_001110,
+                    FPUOp2::Mul32 => 0b000_11110_00_1_00000_000010,
+                    FPUOp2::Mul64 => 0b000_11110_01_1_00000_000010,
+                    FPUOp2::Div32 => 0b000_11110_00_1_00000_000110,
+                    FPUOp2::Div64 => 0b000_11110_01_1_00000_000110,
+                    FPUOp2::Max32 => 0b000_11110_00_1_00000_010010,
+                    FPUOp2::Max64 => 0b000_11110_01_1_00000_010010,
+                    FPUOp2::Min32 => 0b000_11110_00_1_00000_010110,
+                    FPUOp2::Min64 => 0b000_11110_01_1_00000_010110,
+                };
+                sink.put4(enc_fpurrr(top22, rd, rn, rm));
             }
-            &Inst::FpuLoad32 { rd, ref mem } => {
-                unimplemented!()
-            }
-            &Inst::FpuLoad64 { rd, ref mem } => {
-                unimplemented!()
-            }
-            &Inst::FpuStore32 { rd, ref mem } => {
-                unimplemented!()
-            }
-            &Inst::FpuStore64 { rd, ref mem } => {
-                unimplemented!()
-            }
+            &Inst::FpuLoad32 { rd, ref mem } => unimplemented!(),
+            &Inst::FpuLoad64 { rd, ref mem } => unimplemented!(),
+            &Inst::FpuStore32 { rd, ref mem } => unimplemented!(),
+            &Inst::FpuStore64 { rd, ref mem } => unimplemented!(),
+            &Inst::FpuToInt { op, rd, rn } => unimplemented!(),
+            &Inst::IntToFpu { op, rd, rn } => unimplemented!(),
             &Inst::MovToVec64 { rd, rn } => {
                 sink.put4(
                     0b010_01110000_01000_0_0011_1_00000_00000

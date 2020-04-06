@@ -101,10 +101,38 @@ pub enum FPUOp2 {
     Sub64,
     Mul32,
     Mul64,
+    Div32,
+    Div64,
     Max32,
     Max64,
     Min32,
     Min64,
+}
+
+/// A conversion from an FP to an integer value.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum FpuToIntOp {
+    F32ToU32,
+    F32ToI32,
+    F32ToU64,
+    F32ToI64,
+    F64ToU32,
+    F64ToI32,
+    F64ToU64,
+    F64ToI64,
+}
+
+/// A conversion from an integer to an FP value.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum IntToFpuOp {
+    U32ToF32,
+    I32ToF32,
+    U32ToF64,
+    I32ToF64,
+    U64ToF32,
+    I64ToF32,
+    U64ToF64,
+    I64ToF64,
 }
 
 /// A vector ALU operation.
@@ -396,6 +424,19 @@ pub enum Inst {
     FpuStore64 {
         rd: Reg,
         mem: MemArg,
+    },
+
+    /// Conversions between FP and integer values.
+    FpuToInt {
+        op: FpuToIntOp,
+        rd: Writable<Reg>,
+        rn: Reg,
+    },
+
+    IntToFpu {
+        op: IntToFpuOp,
+        rd: Writable<Reg>,
+        rn: Reg,
     },
 
     /// Move to a vector register from a GPR.
@@ -760,6 +801,14 @@ fn arm64_get_regs(inst: &Inst) -> InstRegUses {
             iru.used.insert(rd);
             memarg_regs(mem, &mut iru.used, &mut iru.modified);
         }
+        &Inst::FpuToInt { op, rd, rn } => {
+            iru.defined.insert(rd);
+            iru.used.insert(rn);
+        }
+        &Inst::IntToFpu { op, rd, rn } => {
+            iru.defined.insert(rd);
+            iru.used.insert(rn);
+        }
         &Inst::MovToVec64 { rd, rn } => {
             iru.defined.insert(rd);
             iru.used.insert(rn);
@@ -1104,6 +1153,16 @@ fn arm64_map_regs(
         &mut Inst::FpuStore64 { rd, ref mem } => Inst::FpuStore64 {
             rd: map(u, rd),
             mem: map_mem(u, mem),
+        },
+        &mut Inst::FpuToInt { op, rd, rn } => Inst::FpuToInt {
+            op,
+            rd: map_wr(d, rd),
+            rn: map(u, rn),
+        },
+        &mut Inst::IntToFpu { op, rd, rn } => Inst::IntToFpu {
+            op,
+            rd: map_wr(d, rd),
+            rn: map(u, rn),
         },
         &mut Inst::MovToVec64 { rd, rn } => Inst::MovToVec64 {
             rd: map_wr(d, rd),
@@ -1734,6 +1793,8 @@ impl ShowWithRRU for Inst {
                     FPUOp2::Sub64 => ("fsub", false),
                     FPUOp2::Mul32 => ("fmul", true),
                     FPUOp2::Mul64 => ("fmul", false),
+                    FPUOp2::Div32 => ("fdiv", true),
+                    FPUOp2::Div64 => ("fdiv", false),
                     FPUOp2::Max32 => ("fmax", true),
                     FPUOp2::Max64 => ("fmax", false),
                     FPUOp2::Min32 => ("fmin", true),
@@ -1763,6 +1824,36 @@ impl ShowWithRRU for Inst {
                 let rd = show_freg_sized(rd, mb_rru, /* is32 = */ false);
                 let mem = mem.show_rru_sized(mb_rru, /* size = */ 8);
                 format!("str {}, {}", rd, mem)
+            }
+            &Inst::FpuToInt { op, rd, rn } => {
+                let (op, is32src, is32dest) = match op {
+                    FpuToIntOp::F32ToI32 => ("fcvtzs", true, true),
+                    FpuToIntOp::F32ToU32 => ("fcvtzu", true, true),
+                    FpuToIntOp::F32ToI64 => ("fcvtzs", true, false),
+                    FpuToIntOp::F32ToU64 => ("fcvtzu", true, false),
+                    FpuToIntOp::F64ToI32 => ("fcvtzs", false, true),
+                    FpuToIntOp::F64ToU32 => ("fcvtzu", false, true),
+                    FpuToIntOp::F64ToI64 => ("fcvtzs", false, false),
+                    FpuToIntOp::F64ToU64 => ("fcvtzu", false, false),
+                };
+                let rd = show_ireg_sized(rd.to_reg(), mb_rru, is32dest);
+                let rn = show_freg_sized(rn, mb_rru, is32src);
+                format!("{} {}, {}", op, rd, rn)
+            }
+            &Inst::IntToFpu { op, rd, rn } => {
+                let (op, is32src, is32dest) = match op {
+                    IntToFpuOp::I32ToF32 => ("scvtf", true, true),
+                    IntToFpuOp::U32ToF32 => ("ucvft", true, true),
+                    IntToFpuOp::I64ToF32 => ("scvtf", false, true),
+                    IntToFpuOp::U64ToF32 => ("ucvtf", false, true),
+                    IntToFpuOp::I32ToF64 => ("scvtf", true, false),
+                    IntToFpuOp::U32ToF64 => ("ucvtf", true, false),
+                    IntToFpuOp::I64ToF64 => ("scvtf", false, false),
+                    IntToFpuOp::U64ToF64 => ("ucvtf", false, false),
+                };
+                let rd = show_ireg_sized(rd.to_reg(), mb_rru, is32dest);
+                let rn = show_freg_sized(rn, mb_rru, is32src);
+                format!("{} {}, {}", op, rd, rn)
             }
             &Inst::MovToVec64 { rd, rn } => {
                 let rd = rd.to_reg().show_rru(mb_rru);
