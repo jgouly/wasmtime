@@ -130,8 +130,12 @@ pub enum MemArg {
     Label(MemLabel),
     PostIndexed(Writable<Reg>, SImm9),
     PreIndexed(Writable<Reg>, SImm9),
-    // TODO: Support more than LSL.
-    RegScaled(Reg, Reg, Type, bool),
+    // N.B.: RegReg, RegScaled, and RegScaledExtended all correspond to
+    // what the ISA calls the "register offset" addressing mode. We split out
+    // several options here for more ergonomic codegen.
+    RegReg(Reg, Reg),
+    RegScaled(Reg, Reg, Type),
+    RegScaledExtended(Reg, Reg, Type, ExtendOp),
     Unscaled(Reg, SImm9),
     UnsignedOffset(Reg, UImm12Scaled),
     /// Offset from the stack pointer or frame pointer.
@@ -162,12 +166,17 @@ impl MemArg {
 
     /// Memory reference using the sum of two registers as an address.
     pub fn reg_reg(reg1: Reg, reg2: Reg) -> MemArg {
-        MemArg::RegScaled(reg1, reg2, I64, false)
+        MemArg::RegReg(reg1, reg2)
     }
 
     /// Memory reference using `reg1 + sizeof(ty) * reg2` as an address.
     pub fn reg_reg_scaled(reg1: Reg, reg2: Reg, ty: Type) -> MemArg {
-        MemArg::RegScaled(reg1, reg2, ty, true)
+        MemArg::RegScaled(reg1, reg2, ty)
+    }
+
+    /// Memory reference using `reg1 + sizeof(ty) * reg2` as an address.
+    pub fn reg_reg_scaled_extended(reg1: Reg, reg2: Reg, ty: Type, op: ExtendOp) -> MemArg {
+        MemArg::RegScaledExtended(reg1, reg2, ty, op)
     }
 
     /// Memory reference to a label: a global function or value, or data in the constant pool.
@@ -403,18 +412,32 @@ impl ShowWithRRU for MemArg {
                     format!("[{}]", reg.show_rru(mb_rru))
                 }
             }
-            &MemArg::RegScaled(r1, r2, ty, scaled) => {
-                if scaled {
-                    let shift = shift_for_type(ty);
-                    format!(
-                        "[{}, {}, lsl #{}]",
-                        r1.show_rru(mb_rru),
-                        r2.show_rru(mb_rru),
-                        shift,
-                    )
-                } else {
-                    format!("[{}, {}]", r1.show_rru(mb_rru), r2.show_rru(mb_rru),)
-                }
+            &MemArg::RegReg(r1, r2) => {
+                format!("[{}, {}]", r1.show_rru(mb_rru), r2.show_rru(mb_rru),)
+            }
+            &MemArg::RegScaled(r1, r2, ty) => {
+                let shift = shift_for_type(ty);
+                format!(
+                    "[{}, {}, LSL #{}]",
+                    r1.show_rru(mb_rru),
+                    r2.show_rru(mb_rru),
+                    shift,
+                )
+            }
+            &MemArg::RegScaledExtended(r1, r2, ty, op) => {
+                let shift = shift_for_type(ty);
+                let is32 = match op {
+                    ExtendOp::SXTW | ExtendOp::UXTW => true,
+                    _ => false,
+                };
+                let op = op.show_rru(mb_rru);
+                format!(
+                    "[{}, {}, {} #{}]",
+                    r1.show_rru(mb_rru),
+                    show_ireg_sized(r2, mb_rru, is32),
+                    op,
+                    shift
+                )
             }
             &MemArg::Label(ref label) => label.show_rru(mb_rru),
             &MemArg::PreIndexed(r, simm9) => format!(

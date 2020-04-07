@@ -2139,7 +2139,7 @@ impl LowerBackend for Arm64Backend {
                     // Emit the compound instruction that does:
                     //
                     // adr rA, jt
-                    // ldrsw rB, [rA, rIndex, LSL 2]
+                    // ldrsw rB, [rA, rIndex, UXTW 2]
                     // add rA, rA, rB
                     // br rA
                     // [jt entries]

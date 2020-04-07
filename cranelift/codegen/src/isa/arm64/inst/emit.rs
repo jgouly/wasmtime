@@ -180,12 +180,26 @@ fn enc_ldst_uimm12(op_31_22: u32, uimm12: UImm12Scaled, rn: Reg, rd: Reg) -> u32
         | machreg_to_gpr(rd)
 }
 
-fn enc_ldst_reg(op_31_22: u32, rn: Reg, rm: Reg, s_bit: bool, rd: Reg) -> u32 {
+fn enc_ldst_reg(
+    op_31_22: u32,
+    rn: Reg,
+    rm: Reg,
+    s_bit: bool,
+    extendop: Option<ExtendOp>,
+    rd: Reg,
+) -> u32 {
     let s_bit = if s_bit { 1 } else { 0 };
+    let extend_bits = match extendop {
+        Some(ExtendOp::UXTW) => 0b010,
+        Some(ExtendOp::SXTW) => 0b110,
+        Some(ExtendOp::SXTX) => 0b111,
+        None => 0b011, /* LSL */
+        _ => panic!("bad extend mode for ld/st MemArg"),
+    };
     (op_31_22 << 22)
         | (1 << 21)
         | (machreg_to_gpr(rm) << 16)
-        | (0b011 << 13)
+        | (extend_bits << 13)
         | (s_bit << 12)
         | (0b10 << 10)
         | (machreg_to_gpr(rn) << 5)
@@ -510,7 +524,12 @@ impl<O: MachSectionOutput> MachInstEmit<O> for Inst {
                     &MemArg::UnsignedOffset(reg, uimm12scaled) => {
                         sink.put4(enc_ldst_uimm12(op, uimm12scaled, reg, rd));
                     }
-                    &MemArg::RegScaled(r1, r2, ty, scaled) => {
+                    &MemArg::RegReg(r1, r2) => {
+                        sink.put4(enc_ldst_reg(
+                            op, r1, r2, /* scaled = */ false, /* extendop = */ None, rd,
+                        ));
+                    }
+                    &MemArg::RegScaled(r1, r2, ty) | &MemArg::RegScaledExtended(r1, r2, ty, _) => {
                         match (ty, self) {
                             (I8, &Inst::ULoad8 { .. }) => {}
                             (I8, &Inst::SLoad8 { .. }) => {}
@@ -521,7 +540,14 @@ impl<O: MachSectionOutput> MachInstEmit<O> for Inst {
                             (I64, &Inst::ULoad64 { .. }) => {}
                             _ => panic!("Mismatching reg-scaling type in MemArg"),
                         }
-                        sink.put4(enc_ldst_reg(op, r1, r2, scaled, rd));
+                        let extendop = match &mem {
+                            &MemArg::RegScaled(..) => None,
+                            &MemArg::RegScaledExtended(_, _, _, op) => Some(op),
+                            _ => unreachable!(),
+                        };
+                        sink.put4(enc_ldst_reg(
+                            op, r1, r2, /* scaled = */ true, extendop, rd,
+                        ));
                     }
                     &MemArg::Label(ref label) => {
                         let offset = match label {
@@ -578,8 +604,21 @@ impl<O: MachSectionOutput> MachInstEmit<O> for Inst {
                     &MemArg::UnsignedOffset(reg, uimm12scaled) => {
                         sink.put4(enc_ldst_uimm12(op, uimm12scaled, reg, rd));
                     }
-                    &MemArg::RegScaled(r1, r2, _ty, scaled) => {
-                        sink.put4(enc_ldst_reg(op, r1, r2, scaled, rd));
+                    &MemArg::RegReg(r1, r2) => {
+                        sink.put4(enc_ldst_reg(
+                            op, r1, r2, /* scaled = */ false, /* extendop = */ None, rd,
+                        ));
+                    }
+                    &MemArg::RegScaled(r1, r2, _ty)
+                    | &MemArg::RegScaledExtended(r1, r2, _ty, _) => {
+                        let extendop = match &mem {
+                            &MemArg::RegScaled(..) => None,
+                            &MemArg::RegScaledExtended(_, _, _, op) => Some(op),
+                            _ => unreachable!(),
+                        };
+                        sink.put4(enc_ldst_reg(
+                            op, r1, r2, /* scaled = */ true, extendop, rd,
+                        ));
                     }
                     &MemArg::Label(..) => {
                         panic!("Store to a MemLabel not implemented!");
@@ -909,7 +948,12 @@ impl<O: MachSectionOutput> MachInstEmit<O> for Inst {
                 // Load value out of jump table
                 let inst = Inst::SLoad32 {
                     rd: rtmp2,
-                    mem: MemArg::reg_reg_scaled(rtmp1.to_reg(), rtmp2.to_reg(), I32),
+                    mem: MemArg::reg_reg_scaled_extended(
+                        rtmp1.to_reg(),
+                        rtmp2.to_reg(),
+                        I32,
+                        ExtendOp::UXTW,
+                    ),
                 };
                 inst.emit(sink);
                 // Add base of jump table to jump-table-sourced block offset
@@ -1950,7 +1994,7 @@ mod test {
         insns.push((
             Inst::ULoad8 {
                 rd: writable_xreg(1),
-                mem: MemArg::RegScaled(xreg(2), xreg(5), I8, false),
+                mem: MemArg::RegReg(xreg(2), xreg(5)),
             },
             "41686538",
             "ldrb w1, [x2, x5]",
@@ -1974,7 +2018,7 @@ mod test {
         insns.push((
             Inst::SLoad8 {
                 rd: writable_xreg(1),
-                mem: MemArg::RegScaled(xreg(2), xreg(5), I8, false),
+                mem: MemArg::RegReg(xreg(2), xreg(5)),
             },
             "4168A538",
             "ldrsb x1, [x2, x5]",
@@ -1998,10 +2042,10 @@ mod test {
         insns.push((
             Inst::ULoad16 {
                 rd: writable_xreg(1),
-                mem: MemArg::RegScaled(xreg(2), xreg(3), I16, true),
+                mem: MemArg::RegScaled(xreg(2), xreg(3), I16),
             },
             "41786378",
-            "ldrh w1, [x2, x3, lsl #1]",
+            "ldrh w1, [x2, x3, LSL #1]",
         ));
         insns.push((
             Inst::SLoad16 {
@@ -2025,10 +2069,10 @@ mod test {
         insns.push((
             Inst::SLoad16 {
                 rd: writable_xreg(28),
-                mem: MemArg::RegScaled(xreg(20), xreg(20), I16, true),
+                mem: MemArg::RegScaled(xreg(20), xreg(20), I16),
             },
             "9C7AB478",
-            "ldrsh x28, [x20, x20, lsl #1]",
+            "ldrsh x28, [x20, x20, LSL #1]",
         ));
         insns.push((
             Inst::ULoad32 {
@@ -2052,10 +2096,10 @@ mod test {
         insns.push((
             Inst::ULoad32 {
                 rd: writable_xreg(1),
-                mem: MemArg::RegScaled(xreg(2), xreg(12), I32, true),
+                mem: MemArg::RegScaled(xreg(2), xreg(12), I32),
             },
             "41786CB8",
-            "ldr w1, [x2, x12, lsl #2]",
+            "ldr w1, [x2, x12, LSL #2]",
         ));
         insns.push((
             Inst::SLoad32 {
@@ -2079,10 +2123,10 @@ mod test {
         insns.push((
             Inst::SLoad32 {
                 rd: writable_xreg(1),
-                mem: MemArg::RegScaled(xreg(5), xreg(1), I32, true),
+                mem: MemArg::RegScaled(xreg(5), xreg(1), I32),
             },
             "A178A1B8",
-            "ldrsw x1, [x5, x1, lsl #2]",
+            "ldrsw x1, [x5, x1, LSL #2]",
         ));
         insns.push((
             Inst::ULoad64 {
@@ -2126,7 +2170,7 @@ mod test {
         insns.push((
             Inst::ULoad64 {
                 rd: writable_xreg(1),
-                mem: MemArg::RegScaled(xreg(2), xreg(3), I64, false),
+                mem: MemArg::RegReg(xreg(2), xreg(3)),
                 is_reload: None,
             },
             "416863F8",
@@ -2135,11 +2179,20 @@ mod test {
         insns.push((
             Inst::ULoad64 {
                 rd: writable_xreg(1),
-                mem: MemArg::RegScaled(xreg(2), xreg(3), I64, true),
+                mem: MemArg::RegScaled(xreg(2), xreg(3), I64),
                 is_reload: None,
             },
             "417863F8",
-            "ldr x1, [x2, x3, lsl #3]",
+            "ldr x1, [x2, x3, LSL #3]",
+        ));
+        insns.push((
+            Inst::ULoad64 {
+                rd: writable_xreg(1),
+                mem: MemArg::RegScaledExtended(xreg(2), xreg(3), I64, ExtendOp::SXTW),
+                is_reload: None,
+            },
+            "41D863F8",
+            "ldr x1, [x2, w3, SXTW #3]",
         ));
         insns.push((
             Inst::ULoad64 {
@@ -2286,7 +2339,7 @@ mod test {
         insns.push((
             Inst::Store64 {
                 rd: xreg(1),
-                mem: MemArg::RegScaled(xreg(2), xreg(3), I64, false),
+                mem: MemArg::RegReg(xreg(2), xreg(3)),
                 is_spill: None,
             },
             "416823F8",
@@ -2295,11 +2348,20 @@ mod test {
         insns.push((
             Inst::Store64 {
                 rd: xreg(1),
-                mem: MemArg::RegScaled(xreg(2), xreg(3), I64, true),
+                mem: MemArg::RegScaled(xreg(2), xreg(3), I64),
                 is_spill: None,
             },
             "417823F8",
-            "str x1, [x2, x3, lsl #3]",
+            "str x1, [x2, x3, LSL #3]",
+        ));
+        insns.push((
+            Inst::Store64 {
+                rd: xreg(1),
+                mem: MemArg::RegScaledExtended(xreg(2), xreg(3), I64, ExtendOp::UXTW),
+                is_spill: None,
+            },
+            "415823F8",
+            "str x1, [x2, w3, UXTW #3]",
         ));
         insns.push((
             Inst::Store64 {
