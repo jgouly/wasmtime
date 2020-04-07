@@ -1,4 +1,14 @@
 //! Lowering rules for ARM64.
+//!
+//! TODO: opportunities for better code generation:
+//!
+//! - Smarter use of addressing modes. Recognize a+SCALE*b patterns; recognize
+//!   and incorporate sign/zero extension on indicies. Recognize pre/post-index
+//!   opportunities.
+//!
+//! - Logical-immediate args.
+//!
+//! - Floating-point immediates.
 
 #![allow(dead_code)]
 
@@ -683,11 +693,6 @@ fn lower_insn_to_regs<C: LowerCtx<Inst>>(ctx: &mut C, insn: IRInst) {
             let alu_op = choose_32_64(ty, ALUOp::Sub32, ALUOp::Sub64);
             ctx.emit(alu_inst_imm12(alu_op, rd, rn, rm));
         }
-        Opcode::Imax | Opcode::Imin | Opcode::Umin | Opcode::Umax => {
-            // TODO
-            unimplemented!()
-        }
-
         Opcode::UaddSat | Opcode::SaddSat => {
             // We use the vector instruction set's saturating adds (UQADD /
             // SQADD), which require vector registers.
@@ -1258,11 +1263,7 @@ fn lower_insn_to_regs<C: LowerCtx<Inst>>(ctx: &mut C, insn: IRInst) {
                 (16, true) => Inst::SLoad16 { rd, mem },
                 (32, false) => Inst::ULoad32 { rd, mem },
                 (32, true) => Inst::SLoad32 { rd, mem },
-                (64, _) => Inst::ULoad64 {
-                    rd,
-                    mem,
-                    is_reload: None,
-                },
+                (64, _) => Inst::ULoad64 { rd, mem },
                 _ => panic!("Unsupported size in load"),
             });
         }
@@ -1291,11 +1292,7 @@ fn lower_insn_to_regs<C: LowerCtx<Inst>>(ctx: &mut C, insn: IRInst) {
                 1 | 8 => Inst::Store8 { rd, mem },
                 16 => Inst::Store16 { rd, mem },
                 32 => Inst::Store32 { rd, mem },
-                64 => Inst::Store64 {
-                    rd,
-                    mem,
-                    is_spill: None,
-                },
+                64 => Inst::Store64 { rd, mem },
                 _ => panic!("Unsupported size in store"),
             });
         }
@@ -1456,11 +1453,6 @@ fn lower_insn_to_regs<C: LowerCtx<Inst>>(ctx: &mut C, insn: IRInst) {
             let ty = ctx.input_ty(insn, 0);
             // TODO: float/int bitcasts?
             ctx.emit(Inst::gen_move(rd, rm, ty));
-        }
-
-        Opcode::Isplit | Opcode::Iconcat => {
-            // TODO
-            unimplemented!()
         }
 
         Opcode::FallthroughReturn | Opcode::Return => {
@@ -1675,6 +1667,15 @@ fn lower_insn_to_regs<C: LowerCtx<Inst>>(ctx: &mut C, insn: IRInst) {
         | Opcode::Sload32x2 => {
             // TODO
             panic!("Vector ops not implemented.");
+        }
+
+        Opcode::Isplit | Opcode::Iconcat => {
+            // TODO
+            unimplemented!()
+        }
+        Opcode::Imax | Opcode::Imin | Opcode::Umin | Opcode::Umax => {
+            // TODO
+            unimplemented!()
         }
 
         Opcode::Trueff

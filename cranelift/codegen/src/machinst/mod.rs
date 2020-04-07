@@ -157,14 +157,6 @@ pub trait MachInst: Clone + Debug {
     /// (ret/uncond/cond) and target if applicable.
     fn is_term<'a>(&'a self) -> MachTerminator<'a>;
 
-    /// Is this a reload? If so, give the spillslot source and reg dest. Used
-    /// only for regalloc verification.
-    fn is_reload(&self) -> Option<(Writable<Reg>, SpillSlot)>;
-
-    /// Is this a spill? If so, give the reg source and spillslot dest. Used
-    /// only for regalloc verification.
-    fn is_spill(&self) -> Option<(SpillSlot, Reg)>;
-
     /// Generate a move.
     fn gen_move(to_reg: Writable<Reg>, from_reg: Reg, ty: Type) -> Self;
 

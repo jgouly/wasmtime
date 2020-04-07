@@ -298,7 +298,6 @@ pub enum Inst {
     ULoad64 {
         rd: Writable<Reg>,
         mem: MemArg,
-        is_reload: Option<SpillSlot>,
     },
 
     /// An 8-bit store.
@@ -320,7 +319,6 @@ pub enum Inst {
     Store64 {
         rd: Reg,
         mem: MemArg,
-        is_spill: Option<SpillSlot>,
     },
 
     /// A store of a pair of registers.
@@ -424,22 +422,18 @@ pub enum Inst {
     FpuLoad32 {
         rd: Writable<Reg>,
         mem: MemArg,
-        is_reload: Option<SpillSlot>,
     },
     FpuStore32 {
         rd: Reg,
         mem: MemArg,
-        is_spill: Option<SpillSlot>,
     },
     FpuLoad64 {
         rd: Writable<Reg>,
         mem: MemArg,
-        is_reload: Option<SpillSlot>,
     },
     FpuStore64 {
         rd: Reg,
         mem: MemArg,
-        is_spill: Option<SpillSlot>,
     },
 
     LoadFpuConst32 {
@@ -1112,14 +1106,9 @@ fn arm64_map_regs(
             rd: map_wr(d, rd),
             mem: map_mem(u, mem),
         },
-        &mut Inst::ULoad64 {
-            rd,
-            ref mem,
-            is_reload,
-        } => Inst::ULoad64 {
+        &mut Inst::ULoad64 { rd, ref mem } => Inst::ULoad64 {
             rd: map_wr(d, rd),
             mem: map_mem(u, mem),
-            is_reload,
         },
         &mut Inst::Store8 { rd, ref mem } => Inst::Store8 {
             rd: map(u, rd),
@@ -1133,14 +1122,9 @@ fn arm64_map_regs(
             rd: map(u, rd),
             mem: map_mem(u, mem),
         },
-        &mut Inst::Store64 {
-            rd,
-            ref mem,
-            is_spill,
-        } => Inst::Store64 {
+        &mut Inst::Store64 { rd, ref mem } => Inst::Store64 {
             rd: map(u, rd),
             mem: map_mem(u, mem),
-            is_spill,
         },
         &mut Inst::StoreP64 { rt, rt2, ref mem } => Inst::StoreP64 {
             rt: map(u, rt),
@@ -1201,41 +1185,21 @@ fn arm64_map_regs(
             rn: map(u, rn),
             rm: map(u, rm),
         },
-        &mut Inst::FpuLoad32 {
-            rd,
-            ref mem,
-            is_reload,
-        } => Inst::FpuLoad32 {
+        &mut Inst::FpuLoad32 { rd, ref mem } => Inst::FpuLoad32 {
             rd: map_wr(d, rd),
             mem: map_mem(u, mem),
-            is_reload,
         },
-        &mut Inst::FpuLoad64 {
-            rd,
-            ref mem,
-            is_reload,
-        } => Inst::FpuLoad64 {
+        &mut Inst::FpuLoad64 { rd, ref mem } => Inst::FpuLoad64 {
             rd: map_wr(d, rd),
             mem: map_mem(u, mem),
-            is_reload,
         },
-        &mut Inst::FpuStore32 {
-            rd,
-            ref mem,
-            is_spill,
-        } => Inst::FpuStore32 {
+        &mut Inst::FpuStore32 { rd, ref mem } => Inst::FpuStore32 {
             rd: map(u, rd),
             mem: map_mem(u, mem),
-            is_spill,
         },
-        &mut Inst::FpuStore64 {
-            rd,
-            ref mem,
-            is_spill,
-        } => Inst::FpuStore64 {
+        &mut Inst::FpuStore64 { rd, ref mem } => Inst::FpuStore64 {
             rd: map(u, rd),
             mem: map_mem(u, mem),
-            is_spill,
         },
         &mut Inst::LoadFpuConst32 { rd, const_data } => Inst::LoadFpuConst32 {
             rd: map_wr(d, rd),
@@ -1398,28 +1362,6 @@ impl MachInst for Inst {
     fn is_move(&self) -> Option<(Writable<Reg>, Reg)> {
         match self {
             &Inst::Mov { rd, rm } => Some((rd, rm)),
-            _ => None,
-        }
-    }
-
-    fn is_spill(&self) -> Option<(SpillSlot, Reg)> {
-        match self {
-            &Inst::Store64 {
-                rd,
-                is_spill: Some(slot),
-                ..
-            } => Some((slot, rd)),
-            _ => None,
-        }
-    }
-
-    fn is_reload(&self) -> Option<(Writable<Reg>, SpillSlot)> {
-        match self {
-            &Inst::ULoad64 {
-                rd,
-                is_reload: Some(slot),
-                ..
-            } => Some((rd, slot)),
             _ => None,
         }
     }

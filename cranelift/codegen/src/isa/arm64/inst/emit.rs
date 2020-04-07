@@ -808,7 +808,6 @@ impl<O: MachSectionOutput> MachInstEmit<O> for Inst {
                 let inst = Inst::FpuLoad32 {
                     rd,
                     mem: MemArg::Label(MemLabel::PCRel(8)),
-                    is_reload: None,
                 };
                 inst.emit(sink);
                 let inst = Inst::Jump {
@@ -821,7 +820,6 @@ impl<O: MachSectionOutput> MachInstEmit<O> for Inst {
                 let inst = Inst::FpuLoad64 {
                     rd,
                     mem: MemArg::Label(MemLabel::PCRel(8)),
-                    is_reload: None,
                 };
                 inst.emit(sink);
                 let inst = Inst::Jump {
@@ -1088,7 +1086,6 @@ impl<O: MachSectionOutput> MachInstEmit<O> for Inst {
                 let inst = Inst::ULoad64 {
                     rd,
                     mem: MemArg::Label(MemLabel::PCRel(8)),
-                    is_reload: None,
                 };
                 inst.emit(sink);
                 let inst = Inst::Jump {
@@ -1105,7 +1102,6 @@ impl<O: MachSectionOutput> MachInstEmit<O> for Inst {
                 let inst = Inst::ULoad64 {
                     rd,
                     mem: MemArg::Label(MemLabel::PCRel(8)),
-                    is_reload: None,
                 };
                 inst.emit(sink);
                 let inst = Inst::Jump {
@@ -2238,7 +2234,6 @@ mod test {
             Inst::ULoad64 {
                 rd: writable_xreg(1),
                 mem: MemArg::Unscaled(xreg(2), SImm9::zero()),
-                is_reload: None,
             },
             "410040F8",
             "ldur x1, [x2]",
@@ -2247,7 +2242,6 @@ mod test {
             Inst::ULoad64 {
                 rd: writable_xreg(1),
                 mem: MemArg::Unscaled(xreg(2), SImm9::maybe_from_i64(-256).unwrap()),
-                is_reload: None,
             },
             "410050F8",
             "ldur x1, [x2, #-256]",
@@ -2256,7 +2250,6 @@ mod test {
             Inst::ULoad64 {
                 rd: writable_xreg(1),
                 mem: MemArg::Unscaled(xreg(2), SImm9::maybe_from_i64(255).unwrap()),
-                is_reload: None,
             },
             "41F04FF8",
             "ldur x1, [x2, #255]",
@@ -2268,7 +2261,6 @@ mod test {
                     xreg(2),
                     UImm12Scaled::maybe_from_i64(32760, I64).unwrap(),
                 ),
-                is_reload: None,
             },
             "41FC7FF9",
             "ldr x1, [x2, #32760]",
@@ -2277,7 +2269,6 @@ mod test {
             Inst::ULoad64 {
                 rd: writable_xreg(1),
                 mem: MemArg::RegReg(xreg(2), xreg(3)),
-                is_reload: None,
             },
             "416863F8",
             "ldr x1, [x2, x3]",
@@ -2286,7 +2277,6 @@ mod test {
             Inst::ULoad64 {
                 rd: writable_xreg(1),
                 mem: MemArg::RegScaled(xreg(2), xreg(3), I64),
-                is_reload: None,
             },
             "417863F8",
             "ldr x1, [x2, x3, LSL #3]",
@@ -2295,7 +2285,6 @@ mod test {
             Inst::ULoad64 {
                 rd: writable_xreg(1),
                 mem: MemArg::RegScaledExtended(xreg(2), xreg(3), I64, ExtendOp::SXTW),
-                is_reload: None,
             },
             "41D863F8",
             "ldr x1, [x2, w3, SXTW #3]",
@@ -2304,7 +2293,6 @@ mod test {
             Inst::ULoad64 {
                 rd: writable_xreg(1),
                 mem: MemArg::Label(MemLabel::PCRel(64)),
-                is_reload: None,
             },
             "01020058",
             "ldr x1, pc+64",
@@ -2313,7 +2301,6 @@ mod test {
             Inst::ULoad64 {
                 rd: writable_xreg(1),
                 mem: MemArg::PreIndexed(writable_xreg(2), SImm9::maybe_from_i64(16).unwrap()),
-                is_reload: None,
             },
             "410C41F8",
             "ldr x1, [x2, #16]!",
@@ -2322,7 +2309,6 @@ mod test {
             Inst::ULoad64 {
                 rd: writable_xreg(1),
                 mem: MemArg::PostIndexed(writable_xreg(2), SImm9::maybe_from_i64(16).unwrap()),
-                is_reload: None,
             },
             "410441F8",
             "ldr x1, [x2], #16",
@@ -2331,7 +2317,6 @@ mod test {
             Inst::ULoad64 {
                 rd: writable_xreg(1),
                 mem: MemArg::FPOffset(32768),
-                is_reload: None,
             },
             "0F0090D2EF011D8BE10140F9",
             "movz x15, #32768 ; add x15, x15, fp ; ldr x1, [x15]",
@@ -2340,7 +2325,6 @@ mod test {
             Inst::ULoad64 {
                 rd: writable_xreg(1),
                 mem: MemArg::FPOffset(-32768),
-                is_reload: None,
             },
             "EFFF8F92EF011D8BE10140F9",
             "movn x15, #32767 ; add x15, x15, fp ; ldr x1, [x15]",
@@ -2349,7 +2333,6 @@ mod test {
             Inst::ULoad64 {
                 rd: writable_xreg(1),
                 mem: MemArg::FPOffset(1048576), // 2^20
-                is_reload: None,
             },
             "0F02A0D2EF011D8BE10140F9",
             "movz x15, #1048576 ; add x15, x15, fp ; ldr x1, [x15]",
@@ -2358,7 +2341,6 @@ mod test {
             Inst::ULoad64 {
                 rd: writable_xreg(1),
                 mem: MemArg::FPOffset(1048576 + 1), // 2^20 + 1
-                is_reload: None,
             },
             "4F000058030000140100100000000000EF011D8BE10140F9",
             "ldr x15, 8 ; b 12 ; data 1048577 ; add x15, x15, fp ; ldr x1, [x15]",
@@ -2425,7 +2407,6 @@ mod test {
             Inst::Store64 {
                 rd: xreg(1),
                 mem: MemArg::Unscaled(xreg(2), SImm9::zero()),
-                is_spill: None,
             },
             "410000F8",
             "stur x1, [x2]",
@@ -2437,7 +2418,6 @@ mod test {
                     xreg(2),
                     UImm12Scaled::maybe_from_i64(32760, I64).unwrap(),
                 ),
-                is_spill: None,
             },
             "41FC3FF9",
             "str x1, [x2, #32760]",
@@ -2446,7 +2426,6 @@ mod test {
             Inst::Store64 {
                 rd: xreg(1),
                 mem: MemArg::RegReg(xreg(2), xreg(3)),
-                is_spill: None,
             },
             "416823F8",
             "str x1, [x2, x3]",
@@ -2455,7 +2434,6 @@ mod test {
             Inst::Store64 {
                 rd: xreg(1),
                 mem: MemArg::RegScaled(xreg(2), xreg(3), I64),
-                is_spill: None,
             },
             "417823F8",
             "str x1, [x2, x3, LSL #3]",
@@ -2464,7 +2442,6 @@ mod test {
             Inst::Store64 {
                 rd: xreg(1),
                 mem: MemArg::RegScaledExtended(xreg(2), xreg(3), I64, ExtendOp::UXTW),
-                is_spill: None,
             },
             "415823F8",
             "str x1, [x2, w3, UXTW #3]",
@@ -2473,7 +2450,6 @@ mod test {
             Inst::Store64 {
                 rd: xreg(1),
                 mem: MemArg::PreIndexed(writable_xreg(2), SImm9::maybe_from_i64(16).unwrap()),
-                is_spill: None,
             },
             "410C01F8",
             "str x1, [x2, #16]!",
@@ -2482,7 +2458,6 @@ mod test {
             Inst::Store64 {
                 rd: xreg(1),
                 mem: MemArg::PostIndexed(writable_xreg(2), SImm9::maybe_from_i64(16).unwrap()),
-                is_spill: None,
             },
             "410401F8",
             "str x1, [x2], #16",
@@ -3522,7 +3497,6 @@ mod test {
             Inst::FpuLoad32 {
                 rd: writable_vreg(16),
                 mem: MemArg::RegScaled(xreg(8), xreg(9), F32),
-                is_reload: None,
             },
             "107969BC",
             "ldr s16, [x8, x9, LSL #2]",
@@ -3532,7 +3506,6 @@ mod test {
             Inst::FpuLoad64 {
                 rd: writable_vreg(16),
                 mem: MemArg::RegScaled(xreg(8), xreg(9), F64),
-                is_reload: None,
             },
             "107969FC",
             "ldr d16, [x8, x9, LSL #3]",
@@ -3542,7 +3515,6 @@ mod test {
             Inst::FpuLoad32 {
                 rd: writable_vreg(16),
                 mem: MemArg::Label(MemLabel::PCRel(8)),
-                is_reload: None,
             },
             "5000001C",
             "ldr s16, pc+8",
@@ -3552,7 +3524,6 @@ mod test {
             Inst::FpuLoad64 {
                 rd: writable_vreg(16),
                 mem: MemArg::Label(MemLabel::PCRel(8)),
-                is_reload: None,
             },
             "5000005C",
             "ldr d16, pc+8",
@@ -3562,7 +3533,6 @@ mod test {
             Inst::FpuStore32 {
                 rd: vreg(16),
                 mem: MemArg::RegScaled(xreg(8), xreg(9), F32),
-                is_spill: None,
             },
             "107929BC",
             "str s16, [x8, x9, LSL #2]",
@@ -3572,7 +3542,6 @@ mod test {
             Inst::FpuStore64 {
                 rd: vreg(16),
                 mem: MemArg::RegScaled(xreg(8), xreg(9), F64),
-                is_spill: None,
             },
             "107929FC",
             "str d16, [x8, x9, LSL #3]",

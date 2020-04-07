@@ -171,12 +171,7 @@ impl ARM64ABIBody {
     }
 }
 
-fn load_stack(
-    fp_offset: i64,
-    into_reg: Writable<Reg>,
-    ty: Type,
-    is_reload: Option<SpillSlot>,
-) -> Inst {
+fn load_stack(fp_offset: i64, into_reg: Writable<Reg>, ty: Type) -> Inst {
     assert!(into_reg.to_reg().get_class() == RegClass::I64);
     let mem = MemArg::FPOffset(fp_offset);
 
@@ -189,16 +184,12 @@ fn load_stack(
         | types::B32
         | types::I32
         | types::B64
-        | types::I64 => Inst::ULoad64 {
-            rd: into_reg,
-            mem,
-            is_reload,
-        },
+        | types::I64 => Inst::ULoad64 { rd: into_reg, mem },
         _ => unimplemented!(),
     }
 }
 
-fn store_stack(fp_offset: i64, from_reg: Reg, ty: Type, is_spill: Option<SpillSlot>) -> Inst {
+fn store_stack(fp_offset: i64, from_reg: Reg, ty: Type) -> Inst {
     assert!(from_reg.get_class() == RegClass::I64);
     let mem = MemArg::FPOffset(fp_offset);
 
@@ -211,11 +202,7 @@ fn store_stack(fp_offset: i64, from_reg: Reg, ty: Type, is_spill: Option<SpillSl
         | types::B32
         | types::I32
         | types::B64
-        | types::I64 => Inst::Store64 {
-            rd: from_reg,
-            mem,
-            is_spill,
-        },
+        | types::I64 => Inst::Store64 { rd: from_reg, mem },
         _ => unimplemented!(),
     }
 }
@@ -307,7 +294,7 @@ impl ABIBody<Inst> for ARM64ABIBody {
     fn gen_copy_arg_to_reg(&self, idx: usize, into_reg: Writable<Reg>) -> Inst {
         match &self.sig.args[idx] {
             &ABIArg::Reg(r, ty) => Inst::gen_move(into_reg, r.to_reg(), ty),
-            &ABIArg::Stack(off, ty) => load_stack(off + 16, into_reg, ty, None),
+            &ABIArg::Stack(off, ty) => load_stack(off + 16, into_reg, ty),
             _ => unimplemented!(),
         }
     }
@@ -315,7 +302,7 @@ impl ABIBody<Inst> for ARM64ABIBody {
     fn gen_copy_reg_to_retval(&self, idx: usize, from_reg: Reg) -> Inst {
         match &self.sig.rets[idx] {
             &ABIArg::Reg(r, ty) => Inst::gen_move(Writable::from_reg(r.to_reg()), from_reg, ty),
-            &ABIArg::Stack(off, ty) => store_stack(off + 16, from_reg, ty, None),
+            &ABIArg::Stack(off, ty) => store_stack(off + 16, from_reg, ty),
             _ => unimplemented!(),
         }
     }
@@ -346,14 +333,14 @@ impl ABIBody<Inst> for ARM64ABIBody {
         // Offset from beginning of stackslot area, which is at FP - stackslots_size.
         let stack_off = self.stackslots[slot.as_u32() as usize] as i64;
         let fp_off: i64 = -(self.stackslots_size as i64) + stack_off + (offset as i64);
-        load_stack(fp_off, into_reg, ty, None)
+        load_stack(fp_off, into_reg, ty)
     }
 
     fn store_stackslot(&self, slot: StackSlot, offset: usize, ty: Type, from_reg: Reg) -> Inst {
         // Offset from beginning of stackslot area, which is at FP - stackslots_size.
         let stack_off = self.stackslots[slot.as_u32() as usize] as i64;
         let fp_off: i64 = -(self.stackslots_size as i64) + stack_off + (offset as i64);
-        store_stack(fp_off, from_reg, ty, None)
+        store_stack(fp_off, from_reg, ty)
     }
 
     // Load from a spillslot.
@@ -365,7 +352,7 @@ impl ABIBody<Inst> for ARM64ABIBody {
         let islot = slot.get() as i64;
         let ty_size = self.get_spillslot_size(into_reg.to_reg().get_class(), ty) * 8;
         let fp_off: i64 = -(self.stackslots_size as i64) - (8 * islot) - ty_size as i64;
-        load_stack(fp_off, into_reg, ty, Some(slot))
+        load_stack(fp_off, into_reg, ty)
     }
 
     // Store to a spillslot.
@@ -373,7 +360,7 @@ impl ABIBody<Inst> for ARM64ABIBody {
         let islot = slot.get() as i64;
         let ty_size = self.get_spillslot_size(from_reg.get_class(), ty) * 8;
         let fp_off: i64 = -(self.stackslots_size as i64) - (8 * islot) - ty_size as i64;
-        store_stack(fp_off, from_reg, ty, Some(slot))
+        store_stack(fp_off, from_reg, ty)
     }
 
     fn gen_prologue(&mut self, flags: &settings::Flags) -> Vec<Inst> {
@@ -657,7 +644,6 @@ impl ABICall<Inst> for ARM64ABICall {
             &ABIArg::Stack(off, _) => Inst::Store64 {
                 rd: from_reg,
                 mem: MemArg::SPOffset(off),
-                is_spill: None,
             },
             _ => unimplemented!(),
         }
