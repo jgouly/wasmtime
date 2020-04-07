@@ -408,22 +408,48 @@ pub enum Inst {
         rm: Reg,
     },
 
+    /// FPU comparison, single-precision (32 bit).
+    FpuCmp32 {
+        rn: Reg,
+        rm: Reg,
+    },
+
+    /// FPU comparison, double-precision (64 bit).
+    FpuCmp64 {
+        rn: Reg,
+        rm: Reg,
+    },
+
     /// Floating-point loads and stores.
     FpuLoad32 {
         rd: Writable<Reg>,
         mem: MemArg,
+        is_reload: Option<SpillSlot>,
     },
     FpuStore32 {
         rd: Reg,
         mem: MemArg,
+        is_spill: Option<SpillSlot>,
     },
     FpuLoad64 {
         rd: Writable<Reg>,
         mem: MemArg,
+        is_reload: Option<SpillSlot>,
     },
     FpuStore64 {
         rd: Reg,
         mem: MemArg,
+        is_spill: Option<SpillSlot>,
+    },
+
+    LoadFpuConst32 {
+        rd: Writable<Reg>,
+        const_data: f32,
+    },
+
+    LoadFpuConst64 {
+        rd: Writable<Reg>,
+        const_data: f64,
     },
 
     /// Conversions between FP and integer values.
@@ -639,6 +665,24 @@ impl Inst {
             }
         }
     }
+
+    /// Create an instruction that loads a 32-bit floating-point constant.
+    pub fn load_fp_constant32(rd: Writable<Reg>, value: f32) -> Inst {
+        // TODO: use FMOV immediate form when `value` has sufficiently few mantissa/exponent bits.
+        Inst::LoadFpuConst32 {
+            rd,
+            const_data: value,
+        }
+    }
+
+    /// Create an instruction that loads a 64-bit floating-point constant.
+    pub fn load_fp_constant64(rd: Writable<Reg>, value: f64) -> Inst {
+        // TODO: use FMOV immediate form when `value` has sufficiently few mantissa/exponent bits.
+        Inst::LoadFpuConst64 {
+            rd,
+            const_data: value,
+        }
+    }
 }
 
 //=============================================================================
@@ -649,9 +693,9 @@ fn memarg_regs(memarg: &MemArg, used: &mut Set<Reg>, modified: &mut Set<Writable
         &MemArg::Unscaled(reg, ..) | &MemArg::UnsignedOffset(reg, ..) => {
             used.insert(reg);
         }
-        &MemArg::RegReg(r1, r2, ..) |
-        &MemArg::RegScaled(r1, r2, ..) |
-        &MemArg::RegScaledExtended(r1, r2, ..) => {
+        &MemArg::RegReg(r1, r2, ..)
+        | &MemArg::RegScaled(r1, r2, ..)
+        | &MemArg::RegScaledExtended(r1, r2, ..) => {
             used.insert(r1);
             used.insert(r2);
         }
@@ -787,27 +831,34 @@ fn arm64_get_regs(inst: &Inst) -> InstRegUses {
             iru.used.insert(rn);
             iru.used.insert(rm);
         }
-        &Inst::FpuLoad32 { rd, ref mem } => {
+        &Inst::FpuCmp32 { rn, rm } | &Inst::FpuCmp64 { rn, rm } => {
+            iru.used.insert(rn);
+            iru.used.insert(rm);
+        }
+        &Inst::FpuLoad32 { rd, ref mem, .. } => {
             iru.defined.insert(rd);
             memarg_regs(mem, &mut iru.used, &mut iru.modified);
         }
-        &Inst::FpuLoad64 { rd, ref mem } => {
+        &Inst::FpuLoad64 { rd, ref mem, .. } => {
             iru.defined.insert(rd);
             memarg_regs(mem, &mut iru.used, &mut iru.modified);
         }
-        &Inst::FpuStore32 { rd, ref mem } => {
+        &Inst::FpuStore32 { rd, ref mem, .. } => {
             iru.used.insert(rd);
             memarg_regs(mem, &mut iru.used, &mut iru.modified);
         }
-        &Inst::FpuStore64 { rd, ref mem } => {
+        &Inst::FpuStore64 { rd, ref mem, .. } => {
             iru.used.insert(rd);
             memarg_regs(mem, &mut iru.used, &mut iru.modified);
         }
-        &Inst::FpuToInt { op, rd, rn } => {
+        &Inst::LoadFpuConst32 { rd, .. } | &Inst::LoadFpuConst64 { rd, .. } => {
+            iru.defined.insert(rd);
+        }
+        &Inst::FpuToInt { rd, rn, .. } => {
             iru.defined.insert(rd);
             iru.used.insert(rn);
         }
-        &Inst::IntToFpu { op, rd, rn } => {
+        &Inst::IntToFpu { rd, rn, .. } => {
             iru.defined.insert(rd);
             iru.used.insert(rn);
         }
@@ -921,12 +972,8 @@ fn arm64_map_regs(
         match mem {
             &MemArg::Unscaled(reg, simm9) => MemArg::Unscaled(map(u, reg), simm9),
             &MemArg::UnsignedOffset(reg, uimm12) => MemArg::UnsignedOffset(map(u, reg), uimm12),
-            &MemArg::RegReg(r1, r2) => {
-                MemArg::RegReg(map(u, r1), map(u, r2))
-            }
-            &MemArg::RegScaled(r1, r2, ty) => {
-                MemArg::RegScaled(map(u, r1), map(u, r2), ty)
-            }
+            &MemArg::RegReg(r1, r2) => MemArg::RegReg(map(u, r1), map(u, r2)),
+            &MemArg::RegScaled(r1, r2, ty) => MemArg::RegScaled(map(u, r1), map(u, r2), ty),
             &MemArg::RegScaledExtended(r1, r2, ty, op) => {
                 MemArg::RegScaledExtended(map(u, r1), map(u, r2), ty, op)
             }
@@ -1146,21 +1193,57 @@ fn arm64_map_regs(
             rn: map(u, rn),
             rm: map(u, rm),
         },
-        &mut Inst::FpuLoad32 { rd, ref mem } => Inst::FpuLoad32 {
+        &mut Inst::FpuCmp32 { rn, rm } => Inst::FpuCmp32 {
+            rn: map(u, rn),
+            rm: map(u, rm),
+        },
+        &mut Inst::FpuCmp64 { rn, rm } => Inst::FpuCmp64 {
+            rn: map(u, rn),
+            rm: map(u, rm),
+        },
+        &mut Inst::FpuLoad32 {
+            rd,
+            ref mem,
+            is_reload,
+        } => Inst::FpuLoad32 {
             rd: map_wr(d, rd),
             mem: map_mem(u, mem),
+            is_reload,
         },
-        &mut Inst::FpuLoad64 { rd, ref mem } => Inst::FpuLoad64 {
+        &mut Inst::FpuLoad64 {
+            rd,
+            ref mem,
+            is_reload,
+        } => Inst::FpuLoad64 {
             rd: map_wr(d, rd),
             mem: map_mem(u, mem),
+            is_reload,
         },
-        &mut Inst::FpuStore32 { rd, ref mem } => Inst::FpuStore32 {
+        &mut Inst::FpuStore32 {
+            rd,
+            ref mem,
+            is_spill,
+        } => Inst::FpuStore32 {
             rd: map(u, rd),
             mem: map_mem(u, mem),
+            is_spill,
         },
-        &mut Inst::FpuStore64 { rd, ref mem } => Inst::FpuStore64 {
+        &mut Inst::FpuStore64 {
+            rd,
+            ref mem,
+            is_spill,
+        } => Inst::FpuStore64 {
             rd: map(u, rd),
             mem: map_mem(u, mem),
+            is_spill,
+        },
+        &mut Inst::LoadFpuConst32 { rd, const_data } => Inst::LoadFpuConst32 {
+            rd: map_wr(d, rd),
+            const_data,
+        },
+        &mut Inst::LoadFpuConst64 { rd, const_data } => Inst::LoadFpuConst64 {
+            rd: map_wr(d, rd),
+            const_data,
         },
         &mut Inst::FpuToInt { op, rd, rn } => Inst::FpuToInt {
             op,
@@ -1813,25 +1896,43 @@ impl ShowWithRRU for Inst {
                 let rm = show_freg_sized(rm, mb_rru, is32);
                 format!("{} {}, {}, {}", op, rd, rn, rm)
             }
-            &Inst::FpuLoad32 { rd, ref mem } => {
+            &Inst::FpuCmp32 { rn, rm } => {
+                let rn = show_freg_sized(rn, mb_rru, /* is32 = */ true);
+                let rm = show_freg_sized(rm, mb_rru, /* is32 = */ true);
+                format!("fcmp {}, {}", rn, rm)
+            }
+            &Inst::FpuCmp64 { rn, rm } => {
+                let rn = show_freg_sized(rn, mb_rru, /* is32 = */ false);
+                let rm = show_freg_sized(rm, mb_rru, /* is32 = */ false);
+                format!("fcmp {}, {}", rn, rm)
+            }
+            &Inst::FpuLoad32 { rd, ref mem, .. } => {
                 let rd = show_freg_sized(rd.to_reg(), mb_rru, /* is32 = */ true);
                 let mem = mem.show_rru_sized(mb_rru, /* size = */ 4);
                 format!("ldr {}, {}", rd, mem)
             }
-            &Inst::FpuLoad64 { rd, ref mem } => {
+            &Inst::FpuLoad64 { rd, ref mem, .. } => {
                 let rd = show_freg_sized(rd.to_reg(), mb_rru, /* is32 = */ false);
                 let mem = mem.show_rru_sized(mb_rru, /* size = */ 8);
                 format!("ldr {}, {}", rd, mem)
             }
-            &Inst::FpuStore32 { rd, ref mem } => {
+            &Inst::FpuStore32 { rd, ref mem, .. } => {
                 let rd = show_freg_sized(rd, mb_rru, /* is32 = */ true);
                 let mem = mem.show_rru_sized(mb_rru, /* size = */ 4);
                 format!("str {}, {}", rd, mem)
             }
-            &Inst::FpuStore64 { rd, ref mem } => {
+            &Inst::FpuStore64 { rd, ref mem, .. } => {
                 let rd = show_freg_sized(rd, mb_rru, /* is32 = */ false);
                 let mem = mem.show_rru_sized(mb_rru, /* size = */ 8);
                 format!("str {}, {}", rd, mem)
+            }
+            &Inst::LoadFpuConst32 { rd, const_data } => {
+                let rd = show_freg_sized(rd.to_reg(), mb_rru, /* is32 = */ true);
+                format!("ldr {}, pc+8 ; b 8 ; data.f32 {}", rd, const_data)
+            }
+            &Inst::LoadFpuConst64 { rd, const_data } => {
+                let rd = show_freg_sized(rd.to_reg(), mb_rru, /* is32 = */ false);
+                format!("ldr {}, pc+8 ; b 12 ; data.f64 {}", rd, const_data)
             }
             &Inst::FpuToInt { op, rd, rn } => {
                 let (op, is32src, is32dest) = match op {
@@ -1851,7 +1952,7 @@ impl ShowWithRRU for Inst {
             &Inst::IntToFpu { op, rd, rn } => {
                 let (op, is32src, is32dest) = match op {
                     IntToFpuOp::I32ToF32 => ("scvtf", true, true),
-                    IntToFpuOp::U32ToF32 => ("ucvft", true, true),
+                    IntToFpuOp::U32ToF32 => ("ucvtf", true, true),
                     IntToFpuOp::I64ToF32 => ("scvtf", false, true),
                     IntToFpuOp::U64ToF32 => ("ucvtf", false, true),
                     IntToFpuOp::I32ToF64 => ("scvtf", true, false),
@@ -1859,8 +1960,8 @@ impl ShowWithRRU for Inst {
                     IntToFpuOp::I64ToF64 => ("scvtf", false, false),
                     IntToFpuOp::U64ToF64 => ("ucvtf", false, false),
                 };
-                let rd = show_ireg_sized(rd.to_reg(), mb_rru, is32dest);
-                let rn = show_freg_sized(rn, mb_rru, is32src);
+                let rd = show_freg_sized(rd.to_reg(), mb_rru, is32dest);
+                let rn = show_ireg_sized(rn, mb_rru, is32src);
                 format!("{} {}, {}", op, rd, rn)
             }
             &Inst::MovToVec64 { rd, rn } => {

@@ -468,8 +468,7 @@ impl<'a, I: VCodeInst> Lower<'a, I> {
                 for (dst_reg, (tmp_reg, &(ty, _))) in
                     dst_regs.iter().zip(tmp_regs.iter().zip(phi_classes.iter()))
                 {
-                    self.vcode
-                        .push(I::gen_move(*dst_reg, tmp_reg.to_reg(), ty));
+                    self.vcode.push(I::gen_move(*dst_reg, tmp_reg.to_reg(), ty));
                 }
             }
 

@@ -91,6 +91,10 @@ fn machreg_to_vec(m: Reg) -> u32 {
     m.to_real_reg().get_hw_encoding() as u32
 }
 
+fn machreg_to_gpr_or_vec(m: Reg) -> u32 {
+    m.to_real_reg().get_hw_encoding() as u32
+}
+
 fn enc_arith_rrr(bits_31_21: u16, bits_15_10: u8, rd: Writable<Reg>, rn: Reg, rm: Reg) -> u32 {
     ((bits_31_21 as u32) << 21)
         | ((bits_15_10 as u32) << 10)
@@ -169,7 +173,7 @@ fn enc_ldst_simm9(op_31_22: u32, simm9: SImm9, op_11_10: u32, rn: Reg, rd: Reg) 
         | (simm9.bits() << 12)
         | (op_11_10 << 10)
         | (machreg_to_gpr(rn) << 5)
-        | machreg_to_gpr(rd)
+        | machreg_to_gpr_or_vec(rd)
 }
 
 fn enc_ldst_uimm12(op_31_22: u32, uimm12: UImm12Scaled, rn: Reg, rd: Reg) -> u32 {
@@ -177,7 +181,7 @@ fn enc_ldst_uimm12(op_31_22: u32, uimm12: UImm12Scaled, rn: Reg, rd: Reg) -> u32
         | (0b1 << 24)
         | (uimm12.bits() << 10)
         | (machreg_to_gpr(rn) << 5)
-        | machreg_to_gpr(rd)
+        | machreg_to_gpr_or_vec(rd)
 }
 
 fn enc_ldst_reg(
@@ -203,11 +207,11 @@ fn enc_ldst_reg(
         | (s_bit << 12)
         | (0b10 << 10)
         | (machreg_to_gpr(rn) << 5)
-        | machreg_to_gpr(rd)
+        | machreg_to_gpr_or_vec(rd)
 }
 
 fn enc_ldst_imm19(op_31_24: u32, imm19: u32, rd: Reg) -> u32 {
-    (op_31_24 << 24) | (imm19 << 5) | machreg_to_gpr(rd)
+    (op_31_24 << 24) | (imm19 << 5) | machreg_to_gpr_or_vec(rd)
 }
 
 fn enc_extend(top22: u32, rd: Writable<Reg>, rn: Reg) -> u32 {
@@ -257,6 +261,7 @@ fn enc_cset(rd: Writable<Reg>, cond: Cond) -> u32 {
 }
 
 fn enc_vecmov(is_16b: bool, rd: Writable<Reg>, rn: Reg) -> u32 {
+    debug_assert!(!is_16b); // to be supported later.
     0b00001110_101_00000_00011_1_00000_00000
         | machreg_to_vec(rd.to_reg())
         | (machreg_to_vec(rn) << 16)
@@ -272,6 +277,23 @@ fn enc_fpurrr(top22: u32, rd: Writable<Reg>, rn: Reg, rm: Reg) -> u32 {
         | (machreg_to_vec(rm) << 16)
         | (machreg_to_vec(rn) << 5)
         | machreg_to_vec(rd.to_reg())
+}
+
+fn enc_fcmp(is32: bool, rn: Reg, rm: Reg) -> u32 {
+    let bits = if is32 {
+        0b000_11110_00_1_00000_00_1000_00000_00000
+    } else {
+        0b000_11110_01_1_00000_00_1000_00000_00000
+    };
+    bits | (machreg_to_vec(rm) << 16) | (machreg_to_vec(rn) << 5)
+}
+
+fn enc_fputoint(top16: u32, rd: Writable<Reg>, rn: Reg) -> u32 {
+    (top16 << 16) | (machreg_to_vec(rn) << 5) | machreg_to_gpr(rd.to_reg())
+}
+
+fn enc_inttofpu(top16: u32, rd: Writable<Reg>, rn: Reg) -> u32 {
+    (top16 << 16) | (machreg_to_gpr(rn) << 5) | machreg_to_vec(rd.to_reg())
 }
 
 impl<O: MachSectionOutput> MachInstEmit<O> for Inst {
@@ -494,7 +516,9 @@ impl<O: MachSectionOutput> MachInstEmit<O> for Inst {
             | &Inst::SLoad16 { rd, ref mem }
             | &Inst::ULoad32 { rd, ref mem }
             | &Inst::SLoad32 { rd, ref mem }
-            | &Inst::ULoad64 { rd, ref mem, .. } => {
+            | &Inst::ULoad64 { rd, ref mem, .. }
+            | &Inst::FpuLoad32 { rd, ref mem, .. }
+            | &Inst::FpuLoad64 { rd, ref mem, .. } => {
                 let (mem_insts, mem) = mem_finalize(sink.cur_offset_from_start(), mem);
 
                 for inst in mem_insts.into_iter() {
@@ -515,6 +539,8 @@ impl<O: MachSectionOutput> MachInstEmit<O> for Inst {
                     &Inst::ULoad32 { .. } => 0b1011100001,
                     &Inst::SLoad32 { .. } => 0b1011100010,
                     &Inst::ULoad64 { .. } => 0b1111100001,
+                    &Inst::FpuLoad32 { .. } => 0b1011110001,
+                    &Inst::FpuLoad64 { .. } => 0b1111110001,
                     _ => unreachable!(),
                 };
                 match &mem {
@@ -538,6 +564,8 @@ impl<O: MachSectionOutput> MachInstEmit<O> for Inst {
                             (I32, &Inst::ULoad32 { .. }) => {}
                             (I32, &Inst::SLoad32 { .. }) => {}
                             (I64, &Inst::ULoad64 { .. }) => {}
+                            (F32, &Inst::FpuLoad32 { .. }) => {}
+                            (F64, &Inst::FpuLoad64 { .. }) => {}
                             _ => panic!("Mismatching reg-scaling type in MemArg"),
                         }
                         let extendop = match &mem {
@@ -561,8 +589,14 @@ impl<O: MachSectionOutput> MachInstEmit<O> for Inst {
                             &Inst::SLoad32 { .. } => {
                                 sink.put4(enc_ldst_imm19(0b10011000, offset, rd));
                             }
+                            &Inst::FpuLoad32 { .. } => {
+                                sink.put4(enc_ldst_imm19(0b00011100, offset, rd));
+                            }
                             &Inst::ULoad64 { .. } => {
                                 sink.put4(enc_ldst_imm19(0b01011000, offset, rd));
+                            }
+                            &Inst::FpuLoad64 { .. } => {
+                                sink.put4(enc_ldst_imm19(0b01011100, offset, rd));
                             }
                             _ => panic!("Unspported size for LDR from constant pool!"),
                         }
@@ -583,7 +617,9 @@ impl<O: MachSectionOutput> MachInstEmit<O> for Inst {
             &Inst::Store8 { rd, ref mem }
             | &Inst::Store16 { rd, ref mem }
             | &Inst::Store32 { rd, ref mem }
-            | &Inst::Store64 { rd, ref mem, .. } => {
+            | &Inst::Store64 { rd, ref mem, .. }
+            | &Inst::FpuStore32 { rd, ref mem, .. }
+            | &Inst::FpuStore64 { rd, ref mem, .. } => {
                 let (mem_insts, mem) = mem_finalize(sink.cur_offset_from_start(), mem);
 
                 for inst in mem_insts.into_iter() {
@@ -595,6 +631,8 @@ impl<O: MachSectionOutput> MachInstEmit<O> for Inst {
                     &Inst::Store16 { .. } => 0b0111100000,
                     &Inst::Store32 { .. } => 0b1011100000,
                     &Inst::Store64 { .. } => 0b1111100000,
+                    &Inst::FpuStore32 { .. } => 0b1011110000,
+                    &Inst::FpuStore64 { .. } => 0b1111110000,
                     _ => unreachable!(),
                 };
                 match &mem {
@@ -718,12 +756,80 @@ impl<O: MachSectionOutput> MachInstEmit<O> for Inst {
                 };
                 sink.put4(enc_fpurrr(top22, rd, rn, rm));
             }
-            &Inst::FpuLoad32 { rd, ref mem } => unimplemented!(),
-            &Inst::FpuLoad64 { rd, ref mem } => unimplemented!(),
-            &Inst::FpuStore32 { rd, ref mem } => unimplemented!(),
-            &Inst::FpuStore64 { rd, ref mem } => unimplemented!(),
-            &Inst::FpuToInt { op, rd, rn } => unimplemented!(),
-            &Inst::IntToFpu { op, rd, rn } => unimplemented!(),
+            &Inst::FpuCmp32 { rn, rm } => {
+                sink.put4(enc_fcmp(/* is32 = */ true, rn, rm));
+            }
+            &Inst::FpuCmp64 { rn, rm } => {
+                sink.put4(enc_fcmp(/* is32 = */ false, rn, rm));
+            }
+            &Inst::FpuToInt { op, rd, rn } => {
+                let top16 = match op {
+                    // FCVTZS (32/32-bit)
+                    FpuToIntOp::F32ToI32 => 0b000_11110_00_1_11_000,
+                    // FCVTZU (32/32-bit)
+                    FpuToIntOp::F32ToU32 => 0b000_11110_00_1_11_001,
+                    // FCVTZS (32/64-bit)
+                    FpuToIntOp::F32ToI64 => 0b100_11110_00_1_11_000,
+                    // FCVTZU (32/64-bit)
+                    FpuToIntOp::F32ToU64 => 0b100_11110_00_1_11_001,
+                    // FCVTZS (64/32-bit)
+                    FpuToIntOp::F64ToI32 => 0b000_11110_01_1_11_000,
+                    // FCVTZU (64/32-bit)
+                    FpuToIntOp::F64ToU32 => 0b000_11110_01_1_11_001,
+                    // FCVTZS (64/64-bit)
+                    FpuToIntOp::F64ToI64 => 0b100_11110_01_1_11_000,
+                    // FCVTZU (64/64-bit)
+                    FpuToIntOp::F64ToU64 => 0b100_11110_01_1_11_001,
+                };
+                sink.put4(enc_fputoint(top16, rd, rn));
+            }
+            &Inst::IntToFpu { op, rd, rn } => {
+                let top16 = match op {
+                    // SCVTF (32/32-bit)
+                    IntToFpuOp::I32ToF32 => 0b000_11110_00_1_00_010,
+                    // UCVTF (32/32-bit)
+                    IntToFpuOp::U32ToF32 => 0b000_11110_00_1_00_011,
+                    // SCVTF (64/32-bit)
+                    IntToFpuOp::I64ToF32 => 0b100_11110_00_1_00_010,
+                    // UCVTF (64/32-bit)
+                    IntToFpuOp::U64ToF32 => 0b100_11110_00_1_00_011,
+                    // SCVTF (32/64-bit)
+                    IntToFpuOp::I32ToF64 => 0b000_11110_01_1_00_010,
+                    // UCVTF (32/64-bit)
+                    IntToFpuOp::U32ToF64 => 0b000_11110_01_1_00_011,
+                    // SCVTF (64/64-bit)
+                    IntToFpuOp::I64ToF64 => 0b100_11110_01_1_00_010,
+                    // UCVTF (64/64-bit)
+                    IntToFpuOp::U64ToF64 => 0b100_11110_01_1_00_011,
+                };
+                sink.put4(enc_inttofpu(top16, rd, rn));
+            }
+            &Inst::LoadFpuConst32 { rd, const_data } => {
+                let inst = Inst::FpuLoad32 {
+                    rd,
+                    mem: MemArg::Label(MemLabel::PCRel(8)),
+                    is_reload: None,
+                };
+                inst.emit(sink);
+                let inst = Inst::Jump {
+                    dest: BranchTarget::ResolvedOffset(8),
+                };
+                inst.emit(sink);
+                sink.put4(const_data.to_bits());
+            }
+            &Inst::LoadFpuConst64 { rd, const_data } => {
+                let inst = Inst::FpuLoad64 {
+                    rd,
+                    mem: MemArg::Label(MemLabel::PCRel(8)),
+                    is_reload: None,
+                };
+                inst.emit(sink);
+                let inst = Inst::Jump {
+                    dest: BranchTarget::ResolvedOffset(12),
+                };
+                inst.emit(sink);
+                sink.put8(const_data.to_bits());
+            }
             &Inst::MovToVec64 { rd, rn } => {
                 sink.put4(
                     0b010_01110000_01000_0_0011_1_00000_00000
@@ -3011,6 +3117,483 @@ mod test {
             },
             "EFFF7F10",
             "adr x15, pc+1048572",
+        ));
+
+        insns.push((
+            Inst::FpuMove64 {
+                rd: writable_vreg(8),
+                rn: vreg(4),
+            },
+            "881CA40E",
+            "mov v8.8b, v4.8b",
+        ));
+
+        insns.push((
+            Inst::FpuRR {
+                fpu_op: FPUOp1::Abs32,
+                rd: writable_vreg(15),
+                rn: vreg(30),
+            },
+            "CFC3201E",
+            "fabs s15, s30",
+        ));
+
+        insns.push((
+            Inst::FpuRR {
+                fpu_op: FPUOp1::Abs64,
+                rd: writable_vreg(15),
+                rn: vreg(30),
+            },
+            "CFC3601E",
+            "fabs d15, d30",
+        ));
+
+        insns.push((
+            Inst::FpuRR {
+                fpu_op: FPUOp1::Neg32,
+                rd: writable_vreg(15),
+                rn: vreg(30),
+            },
+            "CF43211E",
+            "fneg s15, s30",
+        ));
+
+        insns.push((
+            Inst::FpuRR {
+                fpu_op: FPUOp1::Neg64,
+                rd: writable_vreg(15),
+                rn: vreg(30),
+            },
+            "CF43611E",
+            "fneg d15, d30",
+        ));
+
+        insns.push((
+            Inst::FpuRR {
+                fpu_op: FPUOp1::Sqrt32,
+                rd: writable_vreg(15),
+                rn: vreg(30),
+            },
+            "CFC3211E",
+            "fsqrt s15, s30",
+        ));
+
+        insns.push((
+            Inst::FpuRR {
+                fpu_op: FPUOp1::Sqrt64,
+                rd: writable_vreg(15),
+                rn: vreg(30),
+            },
+            "CFC3611E",
+            "fsqrt d15, d30",
+        ));
+
+        insns.push((
+            Inst::FpuRR {
+                fpu_op: FPUOp1::Cvt32To64,
+                rd: writable_vreg(15),
+                rn: vreg(30),
+            },
+            "CFC3221E",
+            "fcvt d15, s30",
+        ));
+
+        insns.push((
+            Inst::FpuRR {
+                fpu_op: FPUOp1::Cvt64To32,
+                rd: writable_vreg(15),
+                rn: vreg(30),
+            },
+            "CF43621E",
+            "fcvt s15, d30",
+        ));
+
+        insns.push((
+            Inst::FpuRRR {
+                fpu_op: FPUOp2::Add32,
+                rd: writable_vreg(15),
+                rn: vreg(30),
+                rm: vreg(31),
+            },
+            "CF2B3F1E",
+            "fadd s15, s30, s31",
+        ));
+
+        insns.push((
+            Inst::FpuRRR {
+                fpu_op: FPUOp2::Add64,
+                rd: writable_vreg(15),
+                rn: vreg(30),
+                rm: vreg(31),
+            },
+            "CF2B7F1E",
+            "fadd d15, d30, d31",
+        ));
+
+        insns.push((
+            Inst::FpuRRR {
+                fpu_op: FPUOp2::Sub32,
+                rd: writable_vreg(15),
+                rn: vreg(30),
+                rm: vreg(31),
+            },
+            "CF3B3F1E",
+            "fsub s15, s30, s31",
+        ));
+
+        insns.push((
+            Inst::FpuRRR {
+                fpu_op: FPUOp2::Sub64,
+                rd: writable_vreg(15),
+                rn: vreg(30),
+                rm: vreg(31),
+            },
+            "CF3B7F1E",
+            "fsub d15, d30, d31",
+        ));
+
+        insns.push((
+            Inst::FpuRRR {
+                fpu_op: FPUOp2::Mul32,
+                rd: writable_vreg(15),
+                rn: vreg(30),
+                rm: vreg(31),
+            },
+            "CF0B3F1E",
+            "fmul s15, s30, s31",
+        ));
+
+        insns.push((
+            Inst::FpuRRR {
+                fpu_op: FPUOp2::Mul64,
+                rd: writable_vreg(15),
+                rn: vreg(30),
+                rm: vreg(31),
+            },
+            "CF0B7F1E",
+            "fmul d15, d30, d31",
+        ));
+
+        insns.push((
+            Inst::FpuRRR {
+                fpu_op: FPUOp2::Div32,
+                rd: writable_vreg(15),
+                rn: vreg(30),
+                rm: vreg(31),
+            },
+            "CF1B3F1E",
+            "fdiv s15, s30, s31",
+        ));
+
+        insns.push((
+            Inst::FpuRRR {
+                fpu_op: FPUOp2::Div64,
+                rd: writable_vreg(15),
+                rn: vreg(30),
+                rm: vreg(31),
+            },
+            "CF1B7F1E",
+            "fdiv d15, d30, d31",
+        ));
+
+        insns.push((
+            Inst::FpuRRR {
+                fpu_op: FPUOp2::Max32,
+                rd: writable_vreg(15),
+                rn: vreg(30),
+                rm: vreg(31),
+            },
+            "CF4B3F1E",
+            "fmax s15, s30, s31",
+        ));
+
+        insns.push((
+            Inst::FpuRRR {
+                fpu_op: FPUOp2::Max64,
+                rd: writable_vreg(15),
+                rn: vreg(30),
+                rm: vreg(31),
+            },
+            "CF4B7F1E",
+            "fmax d15, d30, d31",
+        ));
+
+        insns.push((
+            Inst::FpuRRR {
+                fpu_op: FPUOp2::Min32,
+                rd: writable_vreg(15),
+                rn: vreg(30),
+                rm: vreg(31),
+            },
+            "CF5B3F1E",
+            "fmin s15, s30, s31",
+        ));
+
+        insns.push((
+            Inst::FpuRRR {
+                fpu_op: FPUOp2::Min64,
+                rd: writable_vreg(15),
+                rn: vreg(30),
+                rm: vreg(31),
+            },
+            "CF5B7F1E",
+            "fmin d15, d30, d31",
+        ));
+
+        insns.push((
+            Inst::FpuToInt {
+                op: FpuToIntOp::F32ToU32,
+                rd: writable_xreg(1),
+                rn: vreg(4),
+            },
+            "8100391E",
+            "fcvtzu w1, s4",
+        ));
+
+        insns.push((
+            Inst::FpuToInt {
+                op: FpuToIntOp::F32ToU64,
+                rd: writable_xreg(1),
+                rn: vreg(4),
+            },
+            "8100399E",
+            "fcvtzu x1, s4",
+        ));
+
+        insns.push((
+            Inst::FpuToInt {
+                op: FpuToIntOp::F32ToI32,
+                rd: writable_xreg(1),
+                rn: vreg(4),
+            },
+            "8100381E",
+            "fcvtzs w1, s4",
+        ));
+
+        insns.push((
+            Inst::FpuToInt {
+                op: FpuToIntOp::F32ToI64,
+                rd: writable_xreg(1),
+                rn: vreg(4),
+            },
+            "8100389E",
+            "fcvtzs x1, s4",
+        ));
+
+        insns.push((
+            Inst::FpuToInt {
+                op: FpuToIntOp::F64ToU32,
+                rd: writable_xreg(1),
+                rn: vreg(4),
+            },
+            "8100791E",
+            "fcvtzu w1, d4",
+        ));
+
+        insns.push((
+            Inst::FpuToInt {
+                op: FpuToIntOp::F64ToU64,
+                rd: writable_xreg(1),
+                rn: vreg(4),
+            },
+            "8100799E",
+            "fcvtzu x1, d4",
+        ));
+
+        insns.push((
+            Inst::FpuToInt {
+                op: FpuToIntOp::F64ToI32,
+                rd: writable_xreg(1),
+                rn: vreg(4),
+            },
+            "8100781E",
+            "fcvtzs w1, d4",
+        ));
+
+        insns.push((
+            Inst::FpuToInt {
+                op: FpuToIntOp::F64ToI64,
+                rd: writable_xreg(1),
+                rn: vreg(4),
+            },
+            "8100789E",
+            "fcvtzs x1, d4",
+        ));
+
+        insns.push((
+            Inst::IntToFpu {
+                op: IntToFpuOp::U32ToF32,
+                rd: writable_vreg(1),
+                rn: xreg(4),
+            },
+            "8100231E",
+            "ucvtf s1, w4",
+        ));
+
+        insns.push((
+            Inst::IntToFpu {
+                op: IntToFpuOp::I32ToF32,
+                rd: writable_vreg(1),
+                rn: xreg(4),
+            },
+            "8100221E",
+            "scvtf s1, w4",
+        ));
+
+        insns.push((
+            Inst::IntToFpu {
+                op: IntToFpuOp::U32ToF64,
+                rd: writable_vreg(1),
+                rn: xreg(4),
+            },
+            "8100631E",
+            "ucvtf d1, w4",
+        ));
+
+        insns.push((
+            Inst::IntToFpu {
+                op: IntToFpuOp::I32ToF64,
+                rd: writable_vreg(1),
+                rn: xreg(4),
+            },
+            "8100621E",
+            "scvtf d1, w4",
+        ));
+
+        insns.push((
+            Inst::IntToFpu {
+                op: IntToFpuOp::U64ToF32,
+                rd: writable_vreg(1),
+                rn: xreg(4),
+            },
+            "8100239E",
+            "ucvtf s1, x4",
+        ));
+
+        insns.push((
+            Inst::IntToFpu {
+                op: IntToFpuOp::I64ToF32,
+                rd: writable_vreg(1),
+                rn: xreg(4),
+            },
+            "8100229E",
+            "scvtf s1, x4",
+        ));
+
+        insns.push((
+            Inst::IntToFpu {
+                op: IntToFpuOp::U64ToF64,
+                rd: writable_vreg(1),
+                rn: xreg(4),
+            },
+            "8100639E",
+            "ucvtf d1, x4",
+        ));
+
+        insns.push((
+            Inst::IntToFpu {
+                op: IntToFpuOp::I64ToF64,
+                rd: writable_vreg(1),
+                rn: xreg(4),
+            },
+            "8100629E",
+            "scvtf d1, x4",
+        ));
+
+        insns.push((
+            Inst::FpuCmp32 {
+                rn: vreg(23),
+                rm: vreg(24),
+            },
+            "E022381E",
+            "fcmp s23, s24",
+        ));
+
+        insns.push((
+            Inst::FpuCmp64 {
+                rn: vreg(23),
+                rm: vreg(24),
+            },
+            "E022781E",
+            "fcmp d23, d24",
+        ));
+
+        insns.push((
+            Inst::FpuLoad32 {
+                rd: writable_vreg(16),
+                mem: MemArg::RegScaled(xreg(8), xreg(9), F32),
+                is_reload: None,
+            },
+            "107969BC",
+            "ldr s16, [x8, x9, LSL #2]",
+        ));
+
+        insns.push((
+            Inst::FpuLoad64 {
+                rd: writable_vreg(16),
+                mem: MemArg::RegScaled(xreg(8), xreg(9), F64),
+                is_reload: None,
+            },
+            "107969FC",
+            "ldr d16, [x8, x9, LSL #3]",
+        ));
+
+        insns.push((
+            Inst::FpuLoad32 {
+                rd: writable_vreg(16),
+                mem: MemArg::Label(MemLabel::PCRel(8)),
+                is_reload: None,
+            },
+            "5000001C",
+            "ldr s16, pc+8",
+        ));
+
+        insns.push((
+            Inst::FpuLoad64 {
+                rd: writable_vreg(16),
+                mem: MemArg::Label(MemLabel::PCRel(8)),
+                is_reload: None,
+            },
+            "5000005C",
+            "ldr d16, pc+8",
+        ));
+
+        insns.push((
+            Inst::FpuStore32 {
+                rd: vreg(16),
+                mem: MemArg::RegScaled(xreg(8), xreg(9), F32),
+                is_spill: None,
+            },
+            "107929BC",
+            "str s16, [x8, x9, LSL #2]",
+        ));
+
+        insns.push((
+            Inst::FpuStore64 {
+                rd: vreg(16),
+                mem: MemArg::RegScaled(xreg(8), xreg(9), F64),
+                is_spill: None,
+            },
+            "107929FC",
+            "str d16, [x8, x9, LSL #3]",
+        ));
+
+        insns.push((
+            Inst::LoadFpuConst32 {
+                rd: writable_vreg(16),
+                const_data: 1.0,
+            },
+            "5000001C020000140000803F",
+            "ldr s16, pc+8 ; b 8 ; data.f32 1",
+        ));
+
+        insns.push((
+            Inst::LoadFpuConst64 {
+                rd: writable_vreg(16),
+                const_data: 1.0,
+            },
+            "5000005C03000014000000000000F03F",
+            "ldr d16, pc+8 ; b 12 ; data.f64 1",
         ));
 
         let rru = create_reg_universe();
