@@ -464,7 +464,9 @@ fn memarg_regs(memarg: &MemArg, used: &mut Set<Reg>, modified: &mut Set<Writable
         &MemArg::Unscaled(reg, ..) | &MemArg::UnsignedOffset(reg, ..) => {
             used.insert(reg);
         }
-        &MemArg::RegScaled(r1, r2, ..) => {
+        &MemArg::RegReg(r1, r2, ..) |
+        &MemArg::RegScaled(r1, r2, ..) |
+        &MemArg::RegScaledExtended(r1, r2, ..) => {
             used.insert(r1);
             used.insert(r2);
         }
@@ -697,8 +699,14 @@ fn arm64_map_regs(
         match mem {
             &MemArg::Unscaled(reg, simm9) => MemArg::Unscaled(map(u, reg), simm9),
             &MemArg::UnsignedOffset(reg, uimm12) => MemArg::UnsignedOffset(map(u, reg), uimm12),
-            &MemArg::RegScaled(r1, r2, ty, scaled) => {
-                MemArg::RegScaled(map(u, r1), map(u, r2), ty, scaled)
+            &MemArg::RegReg(r1, r2) => {
+                MemArg::RegReg(map(u, r1), map(u, r2))
+            }
+            &MemArg::RegScaled(r1, r2, ty) => {
+                MemArg::RegScaled(map(u, r1), map(u, r2), ty)
+            }
+            &MemArg::RegScaledExtended(r1, r2, ty, op) => {
+                MemArg::RegScaledExtended(map(u, r1), map(u, r2), ty, op)
             }
             &MemArg::Label(ref l) => MemArg::Label(l.clone()),
             &MemArg::PreIndexed(r, simm9) => MemArg::PreIndexed(map_wr(u, r), simm9),
