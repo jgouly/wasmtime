@@ -435,6 +435,14 @@ pub enum Inst {
         rd: Reg,
         mem: MemArg,
     },
+    FpuLoad128 {
+        rd: Writable<Reg>,
+        mem: MemArg,
+    },
+    FpuStore128 {
+        rd: Reg,
+        mem: MemArg,
+    },
 
     LoadFpuConst32 {
         rd: Writable<Reg>,
@@ -837,11 +845,19 @@ fn arm64_get_regs(inst: &Inst) -> InstRegUses {
             iru.defined.insert(rd);
             memarg_regs(mem, &mut iru.used, &mut iru.modified);
         }
+        &Inst::FpuLoad128 { rd, ref mem, .. } => {
+            iru.defined.insert(rd);
+            memarg_regs(mem, &mut iru.used, &mut iru.modified);
+        }
         &Inst::FpuStore32 { rd, ref mem, .. } => {
             iru.used.insert(rd);
             memarg_regs(mem, &mut iru.used, &mut iru.modified);
         }
         &Inst::FpuStore64 { rd, ref mem, .. } => {
+            iru.used.insert(rd);
+            memarg_regs(mem, &mut iru.used, &mut iru.modified);
+        }
+        &Inst::FpuStore128 { rd, ref mem, .. } => {
             iru.used.insert(rd);
             memarg_regs(mem, &mut iru.used, &mut iru.modified);
         }
@@ -1193,11 +1209,19 @@ fn arm64_map_regs(
             rd: map_wr(d, rd),
             mem: map_mem(u, mem),
         },
+        &mut Inst::FpuLoad128 { rd, ref mem } => Inst::FpuLoad64 {
+            rd: map_wr(d, rd),
+            mem: map_mem(u, mem),
+        },
         &mut Inst::FpuStore32 { rd, ref mem } => Inst::FpuStore32 {
             rd: map(u, rd),
             mem: map_mem(u, mem),
         },
         &mut Inst::FpuStore64 { rd, ref mem } => Inst::FpuStore64 {
+            rd: map(u, rd),
+            mem: map_mem(u, mem),
+        },
+        &mut Inst::FpuStore128 { rd, ref mem } => Inst::FpuStore64 {
             rd: map(u, rd),
             mem: map_mem(u, mem),
         },
@@ -1858,6 +1882,12 @@ impl ShowWithRRU for Inst {
                 let mem = mem.show_rru_sized(mb_rru, /* size = */ 8);
                 format!("ldr {}, {}", rd, mem)
             }
+            &Inst::FpuLoad128 { rd, ref mem, .. } => {
+                let rd = rd.to_reg().show_rru(mb_rru);
+                let rd = "q".to_string() + &rd[1..];
+                let mem = mem.show_rru_sized(mb_rru, /* size = */ 8);
+                format!("ldr {}, {}", rd, mem)
+            }
             &Inst::FpuStore32 { rd, ref mem, .. } => {
                 let rd = show_freg_sized(rd, mb_rru, /* is32 = */ true);
                 let mem = mem.show_rru_sized(mb_rru, /* size = */ 4);
@@ -1865,6 +1895,12 @@ impl ShowWithRRU for Inst {
             }
             &Inst::FpuStore64 { rd, ref mem, .. } => {
                 let rd = show_freg_sized(rd, mb_rru, /* is32 = */ false);
+                let mem = mem.show_rru_sized(mb_rru, /* size = */ 8);
+                format!("str {}, {}", rd, mem)
+            }
+            &Inst::FpuStore128 { rd, ref mem, .. } => {
+                let rd = rd.show_rru(mb_rru);
+                let rd = "q".to_string() + &rd[1..];
                 let mem = mem.show_rru_sized(mb_rru, /* size = */ 8);
                 format!("str {}, {}", rd, mem)
             }

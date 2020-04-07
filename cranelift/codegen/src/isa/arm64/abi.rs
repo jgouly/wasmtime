@@ -185,6 +185,8 @@ fn load_stack(fp_offset: i64, into_reg: Writable<Reg>, ty: Type) -> Inst {
         | types::I32
         | types::B64
         | types::I64 => Inst::ULoad64 { rd: into_reg, mem },
+        types::F32 => Inst::FpuLoad32 { rd: into_reg, mem },
+        types::F64 => Inst::FpuLoad64 { rd: into_reg, mem },
         _ => unimplemented!(),
     }
 }
@@ -203,6 +205,8 @@ fn store_stack(fp_offset: i64, from_reg: Reg, ty: Type) -> Inst {
         | types::I32
         | types::B64
         | types::I64 => Inst::Store64 { rd: from_reg, mem },
+        types::F32 => Inst::FpuStore32 { rd: from_reg, mem },
+        types::F64 => Inst::FpuStore64 { rd: from_reg, mem },
         _ => unimplemented!(),
     }
 }
@@ -235,10 +239,21 @@ fn is_caller_save(r: RealReg) -> bool {
     }
 }
 
-fn get_callee_saves(regs: Vec<Writable<RealReg>>) -> Vec<Writable<RealReg>> {
-    regs.into_iter()
-        .filter(|r| is_callee_save(r.to_reg()))
-        .collect()
+fn get_callee_saves(
+    regs: Vec<Writable<RealReg>>,
+) -> (Vec<Writable<RealReg>>, Vec<Writable<RealReg>>) {
+    let mut int_saves = vec![];
+    let mut vec_saves = vec![];
+    for reg in regs.into_iter() {
+        if is_callee_save(reg.to_reg()) {
+            match reg.to_reg().get_class() {
+                RegClass::I64 => int_saves.push(reg),
+                RegClass::V128 => vec_saves.push(reg),
+                _ => panic!("Unexpected RegClass"),
+            }
+        }
+    }
+    (int_saves, vec_saves)
 }
 
 fn get_caller_saves_set() -> Set<Writable<Reg>> {
@@ -427,8 +442,8 @@ impl ABIBody<Inst> for ARM64ABIBody {
         }
 
         // Save clobbered registers.
-        let clobbered = get_callee_saves(self.clobbered.to_vec());
-        for reg_pair in clobbered.chunks(2) {
+        let (clobbered_int, clobbered_vec) = get_callee_saves(self.clobbered.to_vec());
+        for reg_pair in clobbered_int.chunks(2) {
             let (r1, r2) = if reg_pair.len() == 2 {
                 // .to_reg().to_reg(): Writable<RealReg> --> RealReg --> Reg
                 (reg_pair[0].to_reg().to_reg(), reg_pair[1].to_reg().to_reg())
@@ -448,6 +463,21 @@ impl ABIBody<Inst> for ARM64ABIBody {
                 ),
             });
         }
+        let vec_save_bytes = clobbered_vec.len() * 16;
+        if vec_save_bytes != 0 {
+            insts.push(Inst::AluRRImm12 {
+                alu_op: ALUOp::Sub64,
+                rd: writable_stack_reg(),
+                rn: stack_reg(),
+                imm12: Imm12::maybe_from_u64(vec_save_bytes as u64).unwrap(),
+            });
+        }
+        for (i, reg) in clobbered_vec.iter().enumerate() {
+            insts.push(Inst::FpuStore128 {
+                rd: reg.to_reg().to_reg(),
+                mem: MemArg::Unscaled(stack_reg(), SImm9::maybe_from_i64((i * 16) as i64).unwrap()),
+            });
+        }
 
         self.frame_size = Some(total_stacksize);
         insts
@@ -457,8 +487,25 @@ impl ABIBody<Inst> for ARM64ABIBody {
         let mut insts = vec![];
 
         // Restore clobbered registers.
-        let clobbered = get_callee_saves(self.clobbered.to_vec());
-        for reg_pair in clobbered.chunks(2).rev() {
+        let (clobbered_int, clobbered_vec) = get_callee_saves(self.clobbered.to_vec());
+
+        for (i, reg) in clobbered_vec.iter().enumerate() {
+            insts.push(Inst::FpuLoad128 {
+                rd: Writable::from_reg(reg.to_reg().to_reg()),
+                mem: MemArg::Unscaled(stack_reg(), SImm9::maybe_from_i64((i * 16) as i64).unwrap()),
+            });
+        }
+        let vec_save_bytes = clobbered_vec.len() * 16;
+        if vec_save_bytes != 0 {
+            insts.push(Inst::AluRRImm12 {
+                alu_op: ALUOp::Add64,
+                rd: writable_stack_reg(),
+                rn: stack_reg(),
+                imm12: Imm12::maybe_from_u64(vec_save_bytes as u64).unwrap(),
+            });
+        }
+
+        for reg_pair in clobbered_int.chunks(2).rev() {
             let (r1, r2) = if reg_pair.len() == 2 {
                 (
                     reg_pair[0].map(|r| r.to_reg()),

@@ -516,9 +516,10 @@ impl<O: MachSectionOutput> MachInstEmit<O> for Inst {
             | &Inst::SLoad16 { rd, ref mem }
             | &Inst::ULoad32 { rd, ref mem }
             | &Inst::SLoad32 { rd, ref mem }
-            | &Inst::ULoad64 { rd, ref mem, .. }
-            | &Inst::FpuLoad32 { rd, ref mem, .. }
-            | &Inst::FpuLoad64 { rd, ref mem, .. } => {
+            | &Inst::ULoad64 { rd, ref mem }
+            | &Inst::FpuLoad32 { rd, ref mem }
+            | &Inst::FpuLoad64 { rd, ref mem }
+            | &Inst::FpuLoad128 { rd, ref mem } => {
                 let (mem_insts, mem) = mem_finalize(sink.cur_offset_from_start(), mem);
 
                 for inst in mem_insts.into_iter() {
@@ -541,6 +542,7 @@ impl<O: MachSectionOutput> MachInstEmit<O> for Inst {
                     &Inst::ULoad64 { .. } => 0b1111100001,
                     &Inst::FpuLoad32 { .. } => 0b1011110001,
                     &Inst::FpuLoad64 { .. } => 0b1111110001,
+                    &Inst::FpuLoad128 { .. } => 0b0011110011,
                     _ => unreachable!(),
                 };
                 match &mem {
@@ -566,6 +568,7 @@ impl<O: MachSectionOutput> MachInstEmit<O> for Inst {
                             (I64, &Inst::ULoad64 { .. }) => {}
                             (F32, &Inst::FpuLoad32 { .. }) => {}
                             (F64, &Inst::FpuLoad64 { .. }) => {}
+                            (I128, &Inst::FpuLoad128 { .. }) => {}
                             _ => panic!("Mismatching reg-scaling type in MemArg"),
                         }
                         let extendop = match &mem {
@@ -598,6 +601,9 @@ impl<O: MachSectionOutput> MachInstEmit<O> for Inst {
                             &Inst::FpuLoad64 { .. } => {
                                 sink.put4(enc_ldst_imm19(0b01011100, offset, rd));
                             }
+                            &Inst::FpuLoad128 { .. } => {
+                                sink.put4(enc_ldst_imm19(0b10011100, offset, rd));
+                            }
                             _ => panic!("Unspported size for LDR from constant pool!"),
                         }
                     }
@@ -617,9 +623,10 @@ impl<O: MachSectionOutput> MachInstEmit<O> for Inst {
             &Inst::Store8 { rd, ref mem }
             | &Inst::Store16 { rd, ref mem }
             | &Inst::Store32 { rd, ref mem }
-            | &Inst::Store64 { rd, ref mem, .. }
-            | &Inst::FpuStore32 { rd, ref mem, .. }
-            | &Inst::FpuStore64 { rd, ref mem, .. } => {
+            | &Inst::Store64 { rd, ref mem }
+            | &Inst::FpuStore32 { rd, ref mem }
+            | &Inst::FpuStore64 { rd, ref mem }
+            | &Inst::FpuStore128 { rd, ref mem } => {
                 let (mem_insts, mem) = mem_finalize(sink.cur_offset_from_start(), mem);
 
                 for inst in mem_insts.into_iter() {
@@ -633,6 +640,7 @@ impl<O: MachSectionOutput> MachInstEmit<O> for Inst {
                     &Inst::Store64 { .. } => 0b1111100000,
                     &Inst::FpuStore32 { .. } => 0b1011110000,
                     &Inst::FpuStore64 { .. } => 0b1111110000,
+                    &Inst::FpuStore128 { .. } => 0b0011110010,
                     _ => unreachable!(),
                 };
                 match &mem {
@@ -3512,6 +3520,15 @@ mod test {
         ));
 
         insns.push((
+            Inst::FpuLoad128 {
+                rd: writable_vreg(16),
+                mem: MemArg::RegScaled(xreg(8), xreg(9), I128),
+            },
+            "1079E93C",
+            "ldr q16, [x8, x9, LSL #4]",
+        ));
+
+        insns.push((
             Inst::FpuLoad32 {
                 rd: writable_vreg(16),
                 mem: MemArg::Label(MemLabel::PCRel(8)),
@@ -3530,6 +3547,15 @@ mod test {
         ));
 
         insns.push((
+            Inst::FpuLoad128 {
+                rd: writable_vreg(16),
+                mem: MemArg::Label(MemLabel::PCRel(8)),
+            },
+            "5000009C",
+            "ldr q16, pc+8",
+        ));
+
+        insns.push((
             Inst::FpuStore32 {
                 rd: vreg(16),
                 mem: MemArg::RegScaled(xreg(8), xreg(9), F32),
@@ -3545,6 +3571,15 @@ mod test {
             },
             "107929FC",
             "str d16, [x8, x9, LSL #3]",
+        ));
+
+        insns.push((
+            Inst::FpuStore128 {
+                rd: vreg(16),
+                mem: MemArg::RegScaled(xreg(8), xreg(9), I128),
+            },
+            "1079A93C",
+            "str q16, [x8, x9, LSL #4]",
         ));
 
         insns.push((

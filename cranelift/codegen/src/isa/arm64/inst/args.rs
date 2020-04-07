@@ -391,6 +391,7 @@ fn shift_for_type(ty: Type) -> usize {
         2 => 1,
         4 => 2,
         8 => 3,
+        16 => 4,
         _ => panic!("unknown type"),
     }
 }
