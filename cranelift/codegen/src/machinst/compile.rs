@@ -42,7 +42,8 @@ where
 
     let result = {
         let _tt = timing::regalloc();
-        allocate_registers(&mut vcode, algorithm, universe)
+        allocate_registers(&mut vcode, algorithm, universe,
+                           /*request_block_annotations=*/false)
             .map_err(|err| {
                 debug!(
                     "Register allocation error for vcode\n{}\nError: {:?}",

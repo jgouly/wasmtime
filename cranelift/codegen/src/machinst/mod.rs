@@ -111,8 +111,8 @@ use alloc::boxed::Box;
 use alloc::vec::Vec;
 use core::fmt::Debug;
 use core::iter::Sum;
-use regalloc::InstRegUses;
 use regalloc::Map as RegallocMap;
+use regalloc::RegUsageCollector;
 use regalloc::{RealReg, RealRegUniverse, Reg, RegClass, SpillSlot, VirtualReg, Writable};
 use smallvec::SmallVec;
 use std::hash::Hash;
@@ -140,7 +140,7 @@ pub use adapter::*;
 pub trait MachInst: Clone + Debug {
     /// Return the registers referenced by this machine instruction along with
     /// the modes of reference (use, def, modify).
-    fn get_regs(&self) -> InstRegUses;
+    fn get_regs(&self, collector: &mut RegUsageCollector);
 
     /// Map virtual registers to physical registers using the given virt->phys
     /// maps corresponding to the program points prior to, and after, this instruction.
