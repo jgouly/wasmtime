@@ -1526,6 +1526,7 @@ impl MachInst for Inst {
     fn is_move(&self) -> Option<(Writable<Reg>, Reg)> {
         match self {
             &Inst::Mov { rd, rm } => Some((rd, rm)),
+            &Inst::FpuMove64 { rd, rn } => Some((rd, rn)),
             _ => None,
         }
     }
