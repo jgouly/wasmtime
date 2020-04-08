@@ -2,8 +2,6 @@ TODO:
 
 - MVP:
 
-  - Floating point support?
-
   - Performance tests vs. SpiderMonkey WASM
     - SpiderMonkey/Baldrdash bringup
     - test harness: compile time, runtime from profiler run
