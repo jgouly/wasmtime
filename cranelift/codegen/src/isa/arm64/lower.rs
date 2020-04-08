@@ -2309,6 +2309,20 @@ impl LowerBackend for Arm64Backend {
                             not_taken,
                             kind: CondBrKind::Cond(cond),
                         });
+                    } else if let Some(fcmp_insn) =
+                        maybe_input_insn_via_conv(ctx, flag_input, Opcode::Fcmp, Opcode::Bint)
+                    {
+                        let condcode = inst_fp_condcode(ctx.data(fcmp_insn)).unwrap();
+                        let cond = lower_fp_condcode(condcode);
+                        let negated = op0 == Opcode::Brz;
+                        let cond = if negated { cond.invert() } else { cond };
+
+                        lower_fcmp_or_ffcmp_to_flags(ctx, fcmp_insn);
+                        ctx.emit(Inst::CondBr {
+                            taken,
+                            not_taken,
+                            kind: CondBrKind::Cond(cond),
+                        });
                     } else {
                         let rt = input_to_reg(
                             ctx,
