@@ -42,17 +42,18 @@ where
 
     let result = {
         let _tt = timing::regalloc();
-        allocate_registers(&mut vcode, algorithm, universe,
-                           /*request_block_annotations=*/false)
-            .map_err(|err| {
-                debug!(
-                    "Register allocation error for vcode\n{}\nError: {:?}",
-                    vcode.show_rru(Some(universe)),
-                    err
-                );
+        allocate_registers(
+            &mut vcode, algorithm, universe, /*request_block_annotations=*/ false,
+        )
+        .map_err(|err| {
+            debug!(
+                "Register allocation error for vcode\n{}\nError: {:?}",
+                vcode.show_rru(Some(universe)),
                 err
-            })
-            .expect("register allocation")
+            );
+            err
+        })
+        .expect("register allocation")
     };
 
     // Reorder vcode into final order and copy out final instruction sequence

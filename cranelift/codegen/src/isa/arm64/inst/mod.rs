@@ -1644,7 +1644,7 @@ impl MachInst for Inst {
     }
 
     fn is_epilogue_placeholder(&self) -> bool {
-        if let Inst::EpiloguePlaceholder {..} = self {
+        if let Inst::EpiloguePlaceholder { .. } = self {
             true
         } else {
             false
