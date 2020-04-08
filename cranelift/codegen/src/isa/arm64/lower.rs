@@ -12,7 +12,7 @@
 
 #![allow(dead_code)]
 
-use crate::ir::condcodes::IntCC;
+use crate::ir::condcodes::{FloatCC, IntCC};
 use crate::ir::types::*;
 use crate::ir::Inst as IRInst;
 use crate::ir::{Block, InstructionData, Opcode, SourceLoc, TrapCode, Type};
@@ -210,6 +210,14 @@ fn output_to_const<C: LowerCtx<Inst>>(ctx: &mut C, out: InsnOutput) -> Option<u6
             }
         }
     }
+}
+
+fn output_to_const_f32<C: LowerCtx<Inst>>(ctx: &mut C, out: InsnOutput) -> Option<f32> {
+    output_to_const(ctx, out).map(|value| f32::from_bits(value as u32))
+}
+
+fn output_to_const_f64<C: LowerCtx<Inst>>(ctx: &mut C, out: InsnOutput) -> Option<f64> {
+    output_to_const(ctx, out).map(|value| f64::from_bits(value))
 }
 
 /// Lower an instruction output to a constant register-shift amount, if possible.
@@ -595,7 +603,7 @@ fn lower_address<C: LowerCtx<Inst>>(
     let addr = ctx.tmp(RegClass::I64, I64);
 
     // Get the const into a reg.
-    lower_constant(ctx, addr.clone(), offset as u64);
+    lower_constant_u64(ctx, addr.clone(), offset as u64);
 
     // Add each addend to the address.
     for addend in addends {
@@ -611,8 +619,16 @@ fn lower_address<C: LowerCtx<Inst>>(
     MemArg::reg(addr.to_reg())
 }
 
-fn lower_constant<C: LowerCtx<Inst>>(ctx: &mut C, rd: Writable<Reg>, value: u64) {
+fn lower_constant_u64<C: LowerCtx<Inst>>(ctx: &mut C, rd: Writable<Reg>, value: u64) {
     ctx.emit(Inst::load_constant(rd, value));
+}
+
+fn lower_constant_f32<C: LowerCtx<Inst>>(ctx: &mut C, rd: Writable<Reg>, value: f32) {
+    ctx.emit(Inst::load_fp_constant32(rd, value));
+}
+
+fn lower_constant_f64<C: LowerCtx<Inst>>(ctx: &mut C, rd: Writable<Reg>, value: f64) {
+    ctx.emit(Inst::load_fp_constant64(rd, value));
 }
 
 fn lower_condcode(cc: IntCC) -> Cond {
@@ -629,6 +645,46 @@ fn lower_condcode(cc: IntCC) -> Cond {
         IntCC::UnsignedLessThan => Cond::Lo,
         IntCC::Overflow => Cond::Vs,
         IntCC::NotOverflow => Cond::Vc,
+    }
+}
+
+fn lower_fp_condcode(cc: FloatCC) -> Cond {
+    // Refer to `codegen/shared/src/condcodes.rs` and to the `FCMP` ARM64 docs.
+    // The FCMP instruction sets:
+    //               NZCV
+    // - PCSR.NZCV = 0011 on UN (unordered),
+    //               0110 on EQ,
+    //               1000 on LT,
+    //               0010 on GT.
+    match cc {
+        // EQ | LT | GT. Vc => V clear.
+        FloatCC::Ordered => Cond::Vc,
+        // UN. Vs => V set.
+        FloatCC::Unordered => Cond::Vs,
+        // EQ. Eq => Z set.
+        FloatCC::Equal => Cond::Eq,
+        // UN | LT | GT. Ne => Z clear.
+        FloatCC::NotEqual => Cond::Ne,
+        // LT | GT.
+        FloatCC::OrderedNotEqual => unimplemented!(),
+        //  UN | EQ
+        FloatCC::UnorderedOrEqual => unimplemented!(),
+        // LT. Mi => N set.
+        FloatCC::LessThan => Cond::Mi,
+        // LT | EQ. Ls => C clear or Z set.
+        FloatCC::LessThanOrEqual => Cond::Ls,
+        // GT. Gt => Z clear, N = V.
+        FloatCC::GreaterThan => Cond::Gt,
+        // GT | EQ. Ge => N = V.
+        FloatCC::GreaterThanOrEqual => Cond::Ge,
+        // UN | LT
+        FloatCC::UnorderedOrLessThan => unimplemented!(),
+        // UN | LT | EQ
+        FloatCC::UnorderedOrLessThanOrEqual => unimplemented!(),
+        // UN | GT
+        FloatCC::UnorderedOrGreaterThan => unimplemented!(),
+        // UN | GT | EQ
+        FloatCC::UnorderedOrGreaterThanOrEqual => unimplemented!(),
     }
 }
 
@@ -672,10 +728,20 @@ fn lower_insn_to_regs<C: LowerCtx<Inst>>(ctx: &mut C, insn: IRInst) {
     };
 
     match op {
-        Opcode::Iconst | Opcode::Bconst | Opcode::F32const | Opcode::F64const | Opcode::Null => {
+        Opcode::Iconst | Opcode::Bconst | Opcode::Null => {
             let value = output_to_const(ctx, outputs[0]).unwrap();
             let rd = output_to_reg(ctx, outputs[0]);
-            lower_constant(ctx, rd, value);
+            lower_constant_u64(ctx, rd, value);
+        }
+        Opcode::F32const => {
+            let value = output_to_const_f32(ctx, outputs[0]).unwrap();
+            let rd = output_to_reg(ctx, outputs[0]);
+            lower_constant_f32(ctx, rd, value);
+        }
+        Opcode::F64const => {
+            let value = output_to_const_f64(ctx, outputs[0]).unwrap();
+            let rd = output_to_reg(ctx, outputs[0]);
+            lower_constant_f64(ctx, rd, value);
         }
         Opcode::Iadd => {
             let rd = output_to_reg(ctx, outputs[0]);
@@ -1324,44 +1390,47 @@ fn lower_insn_to_regs<C: LowerCtx<Inst>>(ctx: &mut C, insn: IRInst) {
             // Nothing.
         }
 
-        Opcode::Select => {
-            let (cmp_op, narrow_mode) = if ty_bits(ctx.input_ty(insn, 0)) > 32 {
-                (ALUOp::SubS64, NarrowValueMode::ZeroExtend64)
+        Opcode::Select | Opcode::Selectif => {
+            let cond = if op == Opcode::Select {
+                let (cmp_op, narrow_mode) = if ty_bits(ctx.input_ty(insn, 0)) > 32 {
+                    (ALUOp::SubS64, NarrowValueMode::ZeroExtend64)
+                } else {
+                    (ALUOp::SubS32, NarrowValueMode::ZeroExtend32)
+                };
+
+                let rcond = input_to_reg(ctx, inputs[0], narrow_mode);
+                // cmp rcond, #0
+                ctx.emit(Inst::AluRRR {
+                    alu_op: cmp_op,
+                    rd: writable_zero_reg(),
+                    rn: rcond,
+                    rm: zero_reg(),
+                });
+                Cond::Ne
             } else {
-                (ALUOp::SubS32, NarrowValueMode::ZeroExtend32)
+                let condcode = inst_condcode(ctx.data(insn)).unwrap();
+                let cond = lower_condcode(condcode);
+                let is_signed = condcode_is_signed(condcode);
+                // Verification ensures that the input is always a
+                // single-def ifcmp.
+                let ifcmp_insn = maybe_input_insn(ctx, inputs[0], Opcode::Ifcmp).unwrap();
+                lower_icmp_or_ifcmp_to_flags(ctx, ifcmp_insn, is_signed);
+                cond
             };
 
-            let rcond = input_to_reg(ctx, inputs[0], narrow_mode);
-            // cmp rcond, #0
-            ctx.emit(Inst::AluRRR {
-                alu_op: cmp_op,
-                rd: writable_zero_reg(),
-                rn: rcond,
-                rm: zero_reg(),
-            });
             // csel.COND rd, rn, rm
             let rd = output_to_reg(ctx, outputs[0]);
             let rn = input_to_reg(ctx, inputs[1], NarrowValueMode::None);
             let rm = input_to_reg(ctx, inputs[2], NarrowValueMode::None);
-            ctx.emit(Inst::CSel {
-                cond: Cond::Ne,
-                rd,
-                rn,
-                rm,
-            });
-        }
-        Opcode::Selectif => {
-            let condcode = inst_condcode(ctx.data(insn)).unwrap();
-            let cond = lower_condcode(condcode);
-            let is_signed = condcode_is_signed(condcode);
-            // Verification ensures that the input is always a
-            // single-def ifcmp.
-            let ifcmp_insn = maybe_input_insn(ctx, inputs[0], Opcode::Ifcmp).unwrap();
-            lower_icmp_or_ifcmp_to_flags(ctx, ifcmp_insn, is_signed);
-            let rd = output_to_reg(ctx, outputs[0]);
-            let rn = input_to_reg(ctx, inputs[1], NarrowValueMode::None);
-            let rm = input_to_reg(ctx, inputs[2], NarrowValueMode::None);
-            ctx.emit(Inst::CSel { cond, rd, rn, rm });
+            let ty = ctx.output_ty(insn, 0);
+            let bits = ty_bits(ty);
+            if ty_is_float(ty) && bits == 32 {
+                ctx.emit(Inst::FpuCSel32 { cond, rd, rn, rm });
+            } else if ty_is_float(ty) && bits == 64 {
+                ctx.emit(Inst::FpuCSel64 { cond, rd, rn, rm });
+            } else {
+                ctx.emit(Inst::CSel { cond, rd, rn, rm });
+            }
         }
 
         Opcode::Bitselect => {
@@ -1405,8 +1474,17 @@ fn lower_insn_to_regs<C: LowerCtx<Inst>>(ctx: &mut C, insn: IRInst) {
             ctx.emit(Inst::CSet { rd, cond });
         }
 
+        Opcode::Trueff => {
+            let condcode = inst_fp_condcode(ctx.data(insn)).unwrap();
+            let cond = lower_fp_condcode(condcode);
+            let ffcmp_insn = maybe_input_insn(ctx, inputs[0], Opcode::Ffcmp).unwrap();
+            lower_fcmp_or_ffcmp_to_flags(ctx, ffcmp_insn);
+            let rd = output_to_reg(ctx, outputs[0]);
+            ctx.emit(Inst::CSet { rd, cond });
+        }
+
         Opcode::IsNull | Opcode::IsInvalid => {
-            unimplemented!("Reference types not supported");
+            panic!("Reference types not supported");
         }
 
         Opcode::Copy => {
@@ -1449,10 +1527,31 @@ fn lower_insn_to_regs<C: LowerCtx<Inst>>(ctx: &mut C, insn: IRInst) {
 
         Opcode::Bitcast => {
             let rd = output_to_reg(ctx, outputs[0]);
-            let rm = input_to_reg(ctx, inputs[0], NarrowValueMode::ZeroExtend64);
-            let ty = ctx.input_ty(insn, 0);
-            // TODO: float/int bitcasts?
-            ctx.emit(Inst::gen_move(rd, rm, ty));
+            let ity = ctx.input_ty(insn, 0);
+            let oty = ctx.output_ty(insn, 0);
+            match (ty_is_float(ity), ty_is_float(oty)) {
+                (true, true) => {
+                    let narrow_mode = if ty_bits(ity) <= 32 && ty_bits(oty) <= 32 {
+                        NarrowValueMode::ZeroExtend32
+                    } else {
+                        NarrowValueMode::ZeroExtend64
+                    };
+                    let rm = input_to_reg(ctx, inputs[0], narrow_mode);
+                    ctx.emit(Inst::gen_move(rd, rm, oty));
+                }
+                (false, false) => {
+                    let rm = input_to_reg(ctx, inputs[0], NarrowValueMode::None);
+                    ctx.emit(Inst::gen_move(rd, rm, oty));
+                }
+                (false, true) => {
+                    let rn = input_to_reg(ctx, inputs[0], NarrowValueMode::ZeroExtend64);
+                    ctx.emit(Inst::MovToVec64 { rd, rn });
+                }
+                (true, false) => {
+                    let rn = input_to_reg(ctx, inputs[0], NarrowValueMode::None);
+                    ctx.emit(Inst::MovFromVec64 { rd, rn });
+                }
+            }
         }
 
         Opcode::FallthroughReturn | Opcode::Return => {
@@ -1468,12 +1567,11 @@ fn lower_insn_to_regs<C: LowerCtx<Inst>>(ctx: &mut C, insn: IRInst) {
             // N.B.: the Ret itself is generated by the ABI.
         }
 
-        Opcode::Ifcmp => {
-            // An Ifcmp must always be seen as a use of a brif instruction. This
-            // will always be the case as long as the IR uses an Ifcmp from the
-            // same block, or a dominating block. In other words, it cannot pass
-            // through a BB param (phi). The flags pass of the verifier will
-            // ensure this.
+        Opcode::Ifcmp | Opcode::Ffcmp => {
+            // An Ifcmp/Ffcmp must always be seen as a use of a brif/brff or trueif/trueff
+            // instruction. This will always be the case as long as the IR uses an Ifcmp/Ffcmp from
+            // the same block, or a dominating block. In other words, it cannot pass through a BB
+            // param (phi). The flags pass of the verifier will ensure this.
             panic!("Should never reach ifcmp as isel root!");
         }
 
@@ -1497,15 +1595,33 @@ fn lower_insn_to_regs<C: LowerCtx<Inst>>(ctx: &mut C, insn: IRInst) {
             ctx.emit(Inst::CondSet { cond, rd });
         }
 
+        Opcode::Fcmp => {
+            let condcode = inst_fp_condcode(ctx.data(insn)).unwrap();
+            let cond = lower_fp_condcode(condcode);
+            let ty = ctx.input_ty(insn, 0);
+            let rn = input_to_reg(ctx, inputs[0], NarrowValueMode::None);
+            let rm = input_to_reg(ctx, inputs[1], NarrowValueMode::None);
+            let rd = output_to_reg(ctx, outputs[0]);
+            match ty_bits(ty) {
+                32 => {
+                    ctx.emit(Inst::FpuCmp32 { rn, rm });
+                }
+                64 => {
+                    ctx.emit(Inst::FpuCmp64 { rn, rm });
+                }
+                _ => panic!("Bad float size"),
+            }
+            ctx.emit(Inst::CondSet { cond, rd });
+        }
+
         Opcode::JumpTableEntry | Opcode::JumpTableBase => {
             panic!("Should not appear: we handle BrTable directly");
         }
 
-        Opcode::Debugtrap | Opcode::Trap | Opcode::Trapif => {
-            let is_cond = op == Opcode::Trapif;
+        Opcode::Debugtrap | Opcode::Trap | Opcode::Trapif | Opcode::Trapff => {
             let maybe_trapinfo = inst_trapcode(ctx.data(insn)).map(|code| (ctx.srcloc(insn), code));
 
-            if is_cond {
+            let cond = if op == Opcode::Trapif {
                 let condcode = inst_condcode(ctx.data(insn)).unwrap();
                 let cond = lower_condcode(condcode);
                 let is_signed = condcode_is_signed(condcode);
@@ -1513,35 +1629,45 @@ fn lower_insn_to_regs<C: LowerCtx<Inst>>(ctx: &mut C, insn: IRInst) {
                 // single-def ifcmp.
                 let ifcmp_insn = maybe_input_insn(ctx, inputs[0], Opcode::Ifcmp).unwrap();
                 lower_icmp_or_ifcmp_to_flags(ctx, ifcmp_insn, is_signed);
+                Some(cond)
+            } else if op == Opcode::Trapff {
+                let condcode = inst_fp_condcode(ctx.data(insn)).unwrap();
+                let cond = lower_fp_condcode(condcode);
+                // Verification ensures that the input is always a
+                // single-def ffcmp.
+                let ffcmp_insn = maybe_input_insn(ctx, inputs[0], Opcode::Ffcmp).unwrap();
+                lower_fcmp_or_ffcmp_to_flags(ctx, ffcmp_insn);
+                Some(cond)
+            } else {
+                None
+            };
 
+            if op == Opcode::Trapif || op == Opcode::Trapff {
                 // Branch around the break instruction with inverted cond. Go straight
                 // to lowered one-target form; this is logically part of a single-in
                 // single-out template lowering.
-                let cond = cond.invert();
+                let cond = cond.unwrap().invert();
                 ctx.emit(Inst::CondBrLowered {
                     target: BranchTarget::ResolvedOffset(8),
                     kind: CondBrKind::Cond(cond),
                 });
             }
+
             ctx.emit(Inst::Brk {
                 trap_info: maybe_trapinfo,
             });
         }
 
         Opcode::Safepoint => {
-            unimplemented!("safepoint support not implemented!");
+            panic!("safepoint support not implemented!");
         }
 
         Opcode::Trapz | Opcode::Trapnz => {
             panic!("trapz / trapnz should have been removed by legalization!");
         }
 
-        Opcode::Trapff => {
-            unimplemented!("trapff requires floating point support");
-        }
-
         Opcode::ResumableTrap => {
-            unimplemented!("Resumable traps not supported");
+            panic!("Resumable traps not supported");
         }
 
         Opcode::FuncAddr => {
@@ -1669,42 +1795,190 @@ fn lower_insn_to_regs<C: LowerCtx<Inst>>(ctx: &mut C, insn: IRInst) {
             panic!("Vector ops not implemented.");
         }
 
-        Opcode::Isplit | Opcode::Iconcat => {
-            // TODO
-            unimplemented!()
-        }
+        Opcode::Isplit | Opcode::Iconcat => panic!("Vector ops not supported."),
         Opcode::Imax | Opcode::Imin | Opcode::Umin | Opcode::Umax => {
-            // TODO
-            unimplemented!()
+            panic!("Vector ops not supported.")
         }
 
-        Opcode::Trueff
-        | Opcode::Fcmp
-        | Opcode::Ffcmp
-        | Opcode::Fadd
-        | Opcode::Fsub
-        | Opcode::Fmul
-        | Opcode::Fdiv
-        | Opcode::Sqrt
-        | Opcode::Fma
-        | Opcode::Fneg
-        | Opcode::Fabs
-        | Opcode::Fcopysign
-        | Opcode::Fmin
-        | Opcode::Fmax
-        | Opcode::Ceil
-        | Opcode::Floor
-        | Opcode::Trunc
-        | Opcode::Nearest
-        | Opcode::Fpromote
-        | Opcode::Fdemote
-        | Opcode::FcvtToUint
-        | Opcode::FcvtToUintSat
-        | Opcode::FcvtToSint
-        | Opcode::FcvtToSintSat
-        | Opcode::FcvtFromUint
-        | Opcode::FcvtFromSint => {
-            panic!("Floating point ops not implemented.");
+        Opcode::Fadd | Opcode::Fsub | Opcode::Fmul | Opcode::Fdiv | Opcode::Fmin | Opcode::Fmax => {
+            let bits = ty_bits(ctx.output_ty(insn, 0));
+            let fpu_op = match (op, bits) {
+                (Opcode::Fadd, 32) => FPUOp2::Add32,
+                (Opcode::Fadd, 64) => FPUOp2::Add64,
+                (Opcode::Fsub, 32) => FPUOp2::Sub32,
+                (Opcode::Fsub, 64) => FPUOp2::Sub64,
+                (Opcode::Fmul, 32) => FPUOp2::Mul32,
+                (Opcode::Fmul, 64) => FPUOp2::Mul64,
+                (Opcode::Fdiv, 32) => FPUOp2::Div32,
+                (Opcode::Fdiv, 64) => FPUOp2::Div64,
+                (Opcode::Fmin, 32) => FPUOp2::Min32,
+                (Opcode::Fmin, 64) => FPUOp2::Min64,
+                (Opcode::Fmax, 32) => FPUOp2::Max32,
+                (Opcode::Fmax, 64) => FPUOp2::Max64,
+                _ => panic!("Unknown op/bits combination"),
+            };
+            let rn = input_to_reg(ctx, inputs[0], NarrowValueMode::None);
+            let rm = input_to_reg(ctx, inputs[1], NarrowValueMode::None);
+            let rd = output_to_reg(ctx, outputs[0]);
+            ctx.emit(Inst::FpuRRR { fpu_op, rd, rn, rm });
+        }
+
+        Opcode::Sqrt | Opcode::Fneg | Opcode::Fabs | Opcode::Fpromote | Opcode::Fdemote => {
+            let bits = ty_bits(ctx.output_ty(insn, 0));
+            let fpu_op = match (op, bits) {
+                (Opcode::Sqrt, 32) => FPUOp1::Sqrt32,
+                (Opcode::Sqrt, 64) => FPUOp1::Sqrt64,
+                (Opcode::Fneg, 32) => FPUOp1::Neg32,
+                (Opcode::Fneg, 64) => FPUOp1::Neg64,
+                (Opcode::Fabs, 32) => FPUOp1::Abs32,
+                (Opcode::Fabs, 64) => FPUOp1::Abs64,
+                (Opcode::Fpromote, 32) => panic!("Cannot promote to 32 bits"),
+                (Opcode::Fpromote, 64) => FPUOp1::Cvt32To64,
+                (Opcode::Fdemote, 32) => FPUOp1::Cvt64To32,
+                (Opcode::Fdemote, 64) => panic!("Cannot demote to 64 bits"),
+                _ => panic!("Unknown op/bits combination"),
+            };
+            let rn = input_to_reg(ctx, inputs[0], NarrowValueMode::None);
+            let rd = output_to_reg(ctx, outputs[0]);
+            ctx.emit(Inst::FpuRR { fpu_op, rd, rn });
+        }
+
+        Opcode::Ceil | Opcode::Floor | Opcode::Trunc | Opcode::Nearest => {
+            let bits = ty_bits(ctx.output_ty(insn, 0));
+            let op = match (op, bits) {
+                (Opcode::Ceil, 32) => FpuRoundMode::Plus32,
+                (Opcode::Ceil, 64) => FpuRoundMode::Plus64,
+                (Opcode::Floor, 32) => FpuRoundMode::Minus32,
+                (Opcode::Floor, 64) => FpuRoundMode::Minus64,
+                (Opcode::Trunc, 32) => FpuRoundMode::Zero32,
+                (Opcode::Trunc, 64) => FpuRoundMode::Zero64,
+                (Opcode::Nearest, 32) => FpuRoundMode::Nearest32,
+                (Opcode::Nearest, 64) => FpuRoundMode::Nearest64,
+                _ => panic!("Unknown op/bits combination"),
+            };
+            let rn = input_to_reg(ctx, inputs[0], NarrowValueMode::None);
+            let rd = output_to_reg(ctx, outputs[0]);
+            ctx.emit(Inst::FpuRound { op, rd, rn });
+        }
+
+        Opcode::Fma => {
+            let bits = ty_bits(ctx.output_ty(insn, 0));
+            let fpu_op = match bits {
+                32 => FPUOp3::MAdd32,
+                64 => FPUOp3::MAdd64,
+                _ => panic!("Unknown op size"),
+            };
+            let rn = input_to_reg(ctx, inputs[0], NarrowValueMode::None);
+            let rm = input_to_reg(ctx, inputs[1], NarrowValueMode::None);
+            let ra = input_to_reg(ctx, inputs[2], NarrowValueMode::None);
+            let rd = output_to_reg(ctx, outputs[0]);
+            ctx.emit(Inst::FpuRRRR {
+                fpu_op,
+                rn,
+                rm,
+                ra,
+                rd,
+            });
+        }
+
+        Opcode::Fcopysign => {
+            // Copy the sign bit from inputs[1] to inputs[0]. We use the following sequence:
+            //
+            // (64 bits for example, 32-bit sequence is analogous):
+            //
+            // MOV Xtmp1, Dinput0
+            // MOV Xtmp2, Dinput1
+            // AND Xtmp2, 0x8000_0000_0000_0000
+            // ORR Xtmp1, Xtmp1, Xtmp2
+            // MOV Doutput, Xtmp1
+
+            let ty = ctx.output_ty(insn, 0);
+            let bits = ty_bits(ty);
+            assert!(bits == 32 || bits == 64);
+            let rn = input_to_reg(ctx, inputs[0], NarrowValueMode::None);
+            let rm = input_to_reg(ctx, inputs[1], NarrowValueMode::None);
+            let rd = output_to_reg(ctx, outputs[0]);
+            let tmp1 = ctx.tmp(RegClass::I64, I64);
+            let tmp2 = ctx.tmp(RegClass::I64, I64);
+            ctx.emit(Inst::MovFromVec64 { rd: tmp1, rn: rn });
+            ctx.emit(Inst::MovFromVec64 { rd: tmp2, rn: rm });
+            let imml = if bits == 32 {
+                // 0x8000_0000
+                ImmLogic::from_raw(/* n = */ false, /* r = */ 1, /* s = */ 0)
+            } else {
+                // 0x8000_0000_0000_0000
+                ImmLogic::from_raw(/* n = */ true, /* r = */ 1, /* s = */ 0)
+            };
+            let alu_op = choose_32_64(ty, ALUOp::And32, ALUOp::And64);
+            ctx.emit(Inst::AluRRImmLogic {
+                alu_op,
+                rd: tmp2,
+                rn: tmp2.to_reg(),
+                imml,
+            });
+            let alu_op = choose_32_64(ty, ALUOp::Orr32, ALUOp::Orr64);
+            ctx.emit(Inst::AluRRR {
+                alu_op,
+                rd: tmp1,
+                rn: tmp1.to_reg(),
+                rm: tmp2.to_reg(),
+            });
+            ctx.emit(Inst::MovToVec64 {
+                rd,
+                rn: tmp1.to_reg(),
+            });
+        }
+
+        Opcode::FcvtToUint | Opcode::FcvtToSint => {
+            let in_bits = ty_bits(ctx.input_ty(insn, 0));
+            let out_bits = ty_bits(ctx.output_ty(insn, 0));
+            let signed = op == Opcode::FcvtToSint;
+            let op = match (signed, in_bits, out_bits) {
+                (false, 32, 32) => FpuToIntOp::F32ToU32,
+                (true, 32, 32) => FpuToIntOp::F32ToI32,
+                (false, 32, 64) => FpuToIntOp::F32ToU64,
+                (true, 32, 64) => FpuToIntOp::F32ToI64,
+                (false, 64, 32) => FpuToIntOp::F64ToU32,
+                (true, 64, 32) => FpuToIntOp::F64ToI32,
+                (false, 64, 64) => FpuToIntOp::F64ToU64,
+                (true, 64, 64) => FpuToIntOp::F64ToI64,
+                _ => panic!("Unknown input/output-bits combination"),
+            };
+            let rn = input_to_reg(ctx, inputs[0], NarrowValueMode::None);
+            let rd = output_to_reg(ctx, outputs[0]);
+            ctx.emit(Inst::FpuToInt { op, rd, rn });
+        }
+
+        Opcode::FcvtFromUint | Opcode::FcvtFromSint => {
+            let in_bits = ty_bits(ctx.input_ty(insn, 0));
+            let out_bits = ty_bits(ctx.output_ty(insn, 0));
+            let signed = op == Opcode::FcvtFromSint;
+            let op = match (signed, in_bits, out_bits) {
+                (false, 32, 32) => IntToFpuOp::U32ToF32,
+                (true, 32, 32) => IntToFpuOp::I32ToF32,
+                (false, 32, 64) => IntToFpuOp::U32ToF64,
+                (true, 32, 64) => IntToFpuOp::I32ToF64,
+                (false, 64, 32) => IntToFpuOp::U64ToF32,
+                (true, 64, 32) => IntToFpuOp::I64ToF32,
+                (false, 64, 64) => IntToFpuOp::U64ToF64,
+                (true, 64, 64) => IntToFpuOp::I64ToF64,
+                _ => panic!("Unknown input/output-bits combination"),
+            };
+            let narrow_mode = match (signed, in_bits) {
+                (false, 32) => NarrowValueMode::ZeroExtend32,
+                (true, 32) => NarrowValueMode::SignExtend32,
+                (false, 64) => NarrowValueMode::ZeroExtend64,
+                (true, 64) => NarrowValueMode::SignExtend64,
+                _ => panic!("Unknown input size"),
+            };
+            let rn = input_to_reg(ctx, inputs[0], narrow_mode);
+            let rd = output_to_reg(ctx, outputs[0]);
+            ctx.emit(Inst::IntToFpu { op, rd, rn });
+        }
+
+        Opcode::FcvtToUintSat | Opcode::FcvtToSintSat => {
+            // TODO: only remaining FP ops!
+            unimplemented!()
         }
 
         Opcode::IaddImm
@@ -1791,6 +2065,19 @@ fn ty_bits(ty: Type) -> usize {
     }
 }
 
+fn ty_is_int(ty: Type) -> bool {
+    match ty {
+        B1 | B8 | I8 | B16 | I16 | B32 | I32 | B64 | I64 => true,
+        F32 | F64 | B128 | I128 => false,
+        IFLAGS | FFLAGS => panic!("Unexpected flags type"),
+        _ => panic!("ty_is_int() on unknown type: {:?}", ty),
+    }
+}
+
+fn ty_is_float(ty: Type) -> bool {
+    !ty_is_int(ty)
+}
+
 fn choose_32_64(ty: Type, op32: ALUOp, op64: ALUOp) -> ALUOp {
     let bits = ty_bits(ty);
     if bits <= 32 {
@@ -1838,6 +2125,16 @@ fn inst_condcode(data: &InstructionData) -> Option<IntCC> {
         | &InstructionData::BranchInt { cond, .. }
         | &InstructionData::IntSelect { cond, .. }
         | &InstructionData::IntCompareImm { cond, .. } => Some(cond),
+        _ => None,
+    }
+}
+
+fn inst_fp_condcode(data: &InstructionData) -> Option<FloatCC> {
+    match data {
+        &InstructionData::BranchFloat { cond, .. }
+        | &InstructionData::FloatCompare { cond, .. }
+        | &InstructionData::FloatCond { cond, .. }
+        | &InstructionData::FloatCondTrap { cond, .. } => Some(cond),
         _ => None,
     }
 }
@@ -1921,6 +2218,32 @@ fn lower_icmp_or_ifcmp_to_flags<C: LowerCtx<Inst>>(ctx: &mut C, insn: IRInst, is
     let alu_op = choose_32_64(ty, ALUOp::SubS32, ALUOp::SubS64);
     let rd = writable_zero_reg();
     ctx.emit(alu_inst_imm12(alu_op, rd, rn, rm));
+}
+
+fn lower_fcmp_or_ffcmp_to_flags<C: LowerCtx<Inst>>(ctx: &mut C, insn: IRInst) {
+    let ty = ctx.input_ty(insn, 0);
+    let bits = ty_bits(ty);
+    let inputs = [
+        InsnInput {
+            insn: insn,
+            input: 0,
+        },
+        InsnInput {
+            insn: insn,
+            input: 1,
+        },
+    ];
+    let rn = input_to_reg(ctx, inputs[0], NarrowValueMode::None);
+    let rm = input_to_reg(ctx, inputs[1], NarrowValueMode::None);
+    match bits {
+        32 => {
+            ctx.emit(Inst::FpuCmp32 { rn, rm });
+        }
+        64 => {
+            ctx.emit(Inst::FpuCmp64 { rn, rm });
+        }
+        _ => panic!("Unknown float size"),
+    }
 }
 
 //=============================================================================
@@ -2074,7 +2397,33 @@ impl LowerBackend for Arm64Backend {
                     }
                 }
 
-                // TODO: Brff
+                Opcode::Brff => {
+                    let condcode = inst_fp_condcode(ctx.data(branches[0])).unwrap();
+                    let cond = lower_fp_condcode(condcode);
+                    let flag_input = InsnInput {
+                        insn: branches[0],
+                        input: 0,
+                    };
+                    if let Some(ffcmp_insn) = maybe_input_insn(ctx, flag_input, Opcode::Ffcmp) {
+                        lower_fcmp_or_ffcmp_to_flags(ctx, ffcmp_insn);
+                        ctx.emit(Inst::CondBr {
+                            taken,
+                            not_taken,
+                            kind: CondBrKind::Cond(cond),
+                        });
+                    } else {
+                        // If the ffcmp result is actually placed in a
+                        // register, we need to move it back into the flags.
+                        let rn = input_to_reg(ctx, flag_input, NarrowValueMode::None);
+                        ctx.emit(Inst::MovToNZCV { rn });
+                        ctx.emit(Inst::CondBr {
+                            taken,
+                            not_taken,
+                            kind: CondBrKind::Cond(cond),
+                        });
+                    }
+                }
+
                 _ => unimplemented!(),
             }
         } else {
@@ -2123,7 +2472,7 @@ impl LowerBackend for Arm64Backend {
                             imm12,
                         });
                     } else {
-                        lower_constant(ctx, rtmp1, jt_size as u64);
+                        lower_constant_u64(ctx, rtmp1, jt_size as u64);
                         ctx.emit(Inst::AluRRR {
                             alu_op: ALUOp::SubS32,
                             rd: writable_zero_reg(),
@@ -2166,8 +2515,6 @@ impl LowerBackend for Arm64Backend {
                         targets_for_term,
                     });
                 }
-
-                Opcode::Trap => unimplemented!(),
 
                 _ => panic!("Unknown branch type!"),
             }

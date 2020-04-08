@@ -172,7 +172,6 @@ impl ARM64ABIBody {
 }
 
 fn load_stack(fp_offset: i64, into_reg: Writable<Reg>, ty: Type) -> Inst {
-    assert!(into_reg.to_reg().get_class() == RegClass::I64);
     let mem = MemArg::FPOffset(fp_offset);
 
     match ty {
@@ -192,7 +191,6 @@ fn load_stack(fp_offset: i64, into_reg: Writable<Reg>, ty: Type) -> Inst {
 }
 
 fn store_stack(fp_offset: i64, from_reg: Reg, ty: Type) -> Inst {
-    assert!(from_reg.get_class() == RegClass::I64);
     let mem = MemArg::FPOffset(fp_offset);
 
     match ty {

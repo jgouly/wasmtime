@@ -185,6 +185,10 @@ impl ImmLogic {
         None
     }
 
+    pub fn from_raw(n: bool, r: u8, s: u8) -> ImmLogic {
+        ImmLogic { N: n, R: r, S: s }
+    }
+
     /// Returns bits ready for encoding: (N:1, R:6, S:6)
     pub fn enc_bits(&self) -> u16 {
         ((self.N as u16) << 12) | ((self.R as u16) << 6) | (self.S as u16)

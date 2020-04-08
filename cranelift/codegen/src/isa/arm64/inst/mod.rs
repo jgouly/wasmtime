@@ -109,6 +109,13 @@ pub enum FPUOp2 {
     Min64,
 }
 
+/// A floating-point unit (FPU) operation with three args.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum FPUOp3 {
+    MAdd32,
+    MAdd64,
+}
+
 /// A conversion from an FP to an integer value.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum FpuToIntOp {
@@ -133,6 +140,20 @@ pub enum IntToFpuOp {
     I64ToF32,
     U64ToF64,
     I64ToF64,
+}
+
+/// Modes for FP rounding ops: round down (floor) or up (ceil), or toward zero (trunc), or to
+/// nearest, and for 32- or 64-bit FP values.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum FpuRoundMode {
+    Minus32,
+    Minus64,
+    Plus32,
+    Plus64,
+    Zero32,
+    Zero64,
+    Nearest32,
+    Nearest64,
 }
 
 /// A vector ALU operation.
@@ -406,6 +427,15 @@ pub enum Inst {
         rm: Reg,
     },
 
+    /// 3-op FPU instruction.
+    FpuRRRR {
+        fpu_op: FPUOp3,
+        rd: Writable<Reg>,
+        rn: Reg,
+        rm: Reg,
+        ra: Reg,
+    },
+
     /// FPU comparison, single-precision (32 bit).
     FpuCmp32 {
         rn: Reg,
@@ -463,6 +493,27 @@ pub enum Inst {
 
     IntToFpu {
         op: IntToFpuOp,
+        rd: Writable<Reg>,
+        rn: Reg,
+    },
+
+    // FP conditional select.
+    FpuCSel32 {
+        rd: Writable<Reg>,
+        rn: Reg,
+        rm: Reg,
+        cond: Cond,
+    },
+    FpuCSel64 {
+        rd: Writable<Reg>,
+        rn: Reg,
+        rm: Reg,
+        cond: Cond,
+    },
+
+    // Round to integer.
+    FpuRound {
+        op: FpuRoundMode,
         rd: Writable<Reg>,
         rn: Reg,
     },
@@ -833,6 +884,12 @@ fn arm64_get_regs(inst: &Inst) -> InstRegUses {
             iru.used.insert(rn);
             iru.used.insert(rm);
         }
+        &Inst::FpuRRRR { rd, rn, rm, ra, .. } => {
+            iru.defined.insert(rd);
+            iru.used.insert(rn);
+            iru.used.insert(rm);
+            iru.used.insert(ra);
+        }
         &Inst::FpuCmp32 { rn, rm } | &Inst::FpuCmp64 { rn, rm } => {
             iru.used.insert(rn);
             iru.used.insert(rm);
@@ -869,6 +926,15 @@ fn arm64_get_regs(inst: &Inst) -> InstRegUses {
             iru.used.insert(rn);
         }
         &Inst::IntToFpu { rd, rn, .. } => {
+            iru.defined.insert(rd);
+            iru.used.insert(rn);
+        }
+        &Inst::FpuCSel32 { rd, rn, rm, .. } | &Inst::FpuCSel64 { rd, rn, rm, .. } => {
+            iru.defined.insert(rd);
+            iru.used.insert(rn);
+            iru.used.insert(rm);
+        }
+        &Inst::FpuRound { rd, rn, .. } => {
             iru.defined.insert(rd);
             iru.used.insert(rn);
         }
@@ -1193,6 +1259,19 @@ fn arm64_map_regs(
             rn: map(u, rn),
             rm: map(u, rm),
         },
+        &mut Inst::FpuRRRR {
+            fpu_op,
+            rd,
+            rn,
+            rm,
+            ra,
+        } => Inst::FpuRRRR {
+            fpu_op,
+            rd: map_wr(d, rd),
+            rn: map(u, rn),
+            rm: map(u, rm),
+            ra: map(u, ra),
+        },
         &mut Inst::FpuCmp32 { rn, rm } => Inst::FpuCmp32 {
             rn: map(u, rn),
             rm: map(u, rm),
@@ -1239,6 +1318,23 @@ fn arm64_map_regs(
             rn: map(u, rn),
         },
         &mut Inst::IntToFpu { op, rd, rn } => Inst::IntToFpu {
+            op,
+            rd: map_wr(d, rd),
+            rn: map(u, rn),
+        },
+        &mut Inst::FpuCSel32 { rd, rn, rm, cond } => Inst::FpuCSel32 {
+            cond,
+            rd: map_wr(d, rd),
+            rn: map(u, rn),
+            rm: map(u, rm),
+        },
+        &mut Inst::FpuCSel64 { rd, rn, rm, cond } => Inst::FpuCSel64 {
+            cond,
+            rd: map_wr(d, rd),
+            rn: map(u, rn),
+            rm: map(u, rm),
+        },
+        &mut Inst::FpuRound { op, rd, rn } => Inst::FpuRound {
             op,
             rd: map_wr(d, rd),
             rn: map(u, rn),
@@ -1862,6 +1958,23 @@ impl ShowWithRRU for Inst {
                 let rm = show_freg_sized(rm, mb_rru, is32);
                 format!("{} {}, {}, {}", op, rd, rn, rm)
             }
+            &Inst::FpuRRRR {
+                fpu_op,
+                rd,
+                rn,
+                rm,
+                ra,
+            } => {
+                let (op, is32) = match fpu_op {
+                    FPUOp3::MAdd32 => ("fmadd", true),
+                    FPUOp3::MAdd64 => ("fmadd", false),
+                };
+                let rd = show_freg_sized(rd.to_reg(), mb_rru, is32);
+                let rn = show_freg_sized(rn, mb_rru, is32);
+                let rm = show_freg_sized(rm, mb_rru, is32);
+                let ra = show_freg_sized(ra, mb_rru, is32);
+                format!("{} {}, {}, {}, {}", op, rd, rn, rm, ra)
+            }
             &Inst::FpuCmp32 { rn, rm } => {
                 let rn = show_freg_sized(rn, mb_rru, /* is32 = */ true);
                 let rm = show_freg_sized(rm, mb_rru, /* is32 = */ true);
@@ -1941,6 +2054,35 @@ impl ShowWithRRU for Inst {
                 let rd = show_freg_sized(rd.to_reg(), mb_rru, is32dest);
                 let rn = show_ireg_sized(rn, mb_rru, is32src);
                 format!("{} {}, {}", op, rd, rn)
+            }
+            &Inst::FpuCSel32 { rd, rn, rm, cond } => {
+                let rd = show_freg_sized(rd.to_reg(), mb_rru, /* is32 = */ true);
+                let rn = show_freg_sized(rn, mb_rru, /* is32 = */ true);
+                let rm = show_freg_sized(rm, mb_rru, /* is32 = */ true);
+                let cond = cond.show_rru(mb_rru);
+                format!("fcsel {}, {}, {}, {}", rd, rn, rm, cond)
+            }
+            &Inst::FpuCSel64 { rd, rn, rm, cond } => {
+                let rd = show_freg_sized(rd.to_reg(), mb_rru, /* is32 = */ false);
+                let rn = show_freg_sized(rn, mb_rru, /* is32 = */ false);
+                let rm = show_freg_sized(rm, mb_rru, /* is32 = */ false);
+                let cond = cond.show_rru(mb_rru);
+                format!("fcsel {}, {}, {}, {}", rd, rn, rm, cond)
+            }
+            &Inst::FpuRound { op, rd, rn } => {
+                let (inst, is32) = match op {
+                    FpuRoundMode::Minus32 => ("frintm", true),
+                    FpuRoundMode::Minus64 => ("frintm", false),
+                    FpuRoundMode::Plus32 => ("frintp", true),
+                    FpuRoundMode::Plus64 => ("frintp", false),
+                    FpuRoundMode::Zero32 => ("frintz", true),
+                    FpuRoundMode::Zero64 => ("frintz", false),
+                    FpuRoundMode::Nearest32 => ("frintn", true),
+                    FpuRoundMode::Nearest64 => ("frintn", false),
+                };
+                let rd = show_freg_sized(rd.to_reg(), mb_rru, is32);
+                let rn = show_freg_sized(rn, mb_rru, is32);
+                format!("{} {}, {}", inst, rd, rn)
             }
             &Inst::MovToVec64 { rd, rn } => {
                 let rd = rd.to_reg().show_rru(mb_rru);
