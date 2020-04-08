@@ -374,7 +374,12 @@ impl ImmLogic {
     }
 
     pub fn from_raw(value: u64, n: bool, r: u8, s: u8) -> ImmLogic {
-        ImmLogic { N: n, R: r, S: s, value }
+        ImmLogic {
+            N: n,
+            R: r,
+            S: s,
+            value,
+        }
     }
 
     /// Returns bits ready for encoding: (N:1, R:6, S:6)
