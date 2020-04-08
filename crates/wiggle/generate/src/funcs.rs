@@ -5,7 +5,11 @@ use crate::lifetimes::anon_lifetime;
 use crate::module_trait::passed_by_reference;
 use crate::names::Names;
 
-pub fn define_func(names: &Names, func: &witx::InterfaceFunc) -> TokenStream {
+pub fn define_func(
+    names: &Names,
+    func: &witx::InterfaceFunc,
+    trait_name: TokenStream,
+) -> TokenStream {
     let funcname = func.name.as_str();
 
     let ident = names.func(&func.name);
@@ -58,9 +62,10 @@ pub fn define_func(names: &Names, func: &witx::InterfaceFunc) -> TokenStream {
                 _ => unreachable!("err should always be passed by value"),
             };
             let err_typename = names.type_ref(&tref, anon_lifetime());
+            let err_method = names.guest_error_conversion_method(&tref);
             quote! {
                 let e = wiggle::GuestError::InFunc { funcname: #funcname, location: #location, err: Box::new(e.into()) };
-                let err: #err_typename = wiggle::GuestErrorType::from_error(e, ctx);
+                let err: #err_typename = GuestErrorConversion::#err_method(ctx, e); // XXX replace with conversion method on trait!
                 return #abi_ret::from(err);
             }
         } else {
@@ -166,7 +171,7 @@ pub fn define_func(names: &Names, func: &witx::InterfaceFunc) -> TokenStream {
         {
             log::trace!(#trace_fmt, #(#args),*);
         }
-        let #trait_bindings  = match ctx.#ident(#(#trait_args),*) {
+        let #trait_bindings  = match #trait_name::#ident(ctx, #(#trait_args),*) {
             Ok(#trait_bindings) => { #trait_rets },
             Err(e) => { #ret_err },
         };

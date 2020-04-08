@@ -274,6 +274,18 @@ impl MoveWideConst {
         None
     }
 
+    pub fn maybe_with_shift(imm: u16, shift: u8) -> Option<MoveWideConst> {
+        let shift_enc = shift / 16;
+        if shift_enc > 3 {
+            None
+        } else {
+            Some(MoveWideConst {
+                bits: imm,
+                shift: shift_enc,
+            })
+        }
+    }
+
     /// Returns the value that this constant represents.
     pub fn value(&self) -> u64 {
         (self.bits as u64) << (16 * self.shift)
@@ -320,6 +332,10 @@ impl ShowWithRRU for ImmShift {
 
 impl ShowWithRRU for MoveWideConst {
     fn show_rru(&self, _mb_rru: Option<&RealRegUniverse>) -> String {
-        format!("#{}", self.value())
+        if self.shift == 0 {
+            format!("#{}", self.bits)
+        } else {
+            format!("#{}, LSL #{}", self.bits, self.shift * 16)
+        }
     }
 }

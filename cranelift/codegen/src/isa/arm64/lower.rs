@@ -620,7 +620,9 @@ fn lower_address<C: LowerCtx<Inst>>(
 }
 
 fn lower_constant_u64<C: LowerCtx<Inst>>(ctx: &mut C, rd: Writable<Reg>, value: u64) {
-    ctx.emit(Inst::load_constant(rd, value));
+    for inst in Inst::load_constant(rd, value) {
+        ctx.emit(inst);
+    }
 }
 
 fn lower_constant_f32<C: LowerCtx<Inst>>(ctx: &mut C, rd: Writable<Reg>, value: f32) {

@@ -43,14 +43,15 @@ pub fn mem_finalize(insn_off: CodeOffset, mem: &MemArg) -> (Vec<Inst>, MemArg) {
                 (vec![], mem)
             } else {
                 let tmp = writable_spilltmp_reg();
-                let const_inst = Inst::load_constant(tmp, off as u64);
+                let mut const_insts = Inst::load_constant(tmp, off as u64);
                 let add_inst = Inst::AluRRR {
                     alu_op: ALUOp::Add64,
                     rd: tmp,
                     rn: tmp.to_reg(),
                     rm: basereg,
                 };
-                (vec![const_inst, add_inst], MemArg::reg(tmp.to_reg()))
+                const_insts.push(add_inst);
+                (const_insts.to_vec(), MemArg::reg(tmp.to_reg()))
             }
         }
         &MemArg::Label(ref label) => {
@@ -149,6 +150,7 @@ const MOVE_WIDE_FIXED: u32 = 0x92800000;
 enum MoveWideOpcode {
     MOVN = 0b00,
     MOVZ = 0b10,
+    MOVK = 0b11,
 }
 
 fn enc_move_wide(op: MoveWideOpcode, rd: Writable<Reg>, imm: MoveWideConst) -> u32 {
@@ -747,6 +749,7 @@ impl<O: MachSectionOutput> MachInstEmit<O> for Inst {
             }
             &Inst::MovZ { rd, imm } => sink.put4(enc_move_wide(MoveWideOpcode::MOVZ, rd, imm)),
             &Inst::MovN { rd, imm } => sink.put4(enc_move_wide(MoveWideOpcode::MOVN, rd, imm)),
+            &Inst::MovK { rd, imm } => sink.put4(enc_move_wide(MoveWideOpcode::MOVK, rd, imm)),
             &Inst::CSel { rd, rn, rm, cond } => {
                 sink.put4(enc_csel(rd, rn, rm, cond));
             }
@@ -2397,15 +2400,15 @@ mod test {
                 mem: MemArg::FPOffset(1048576), // 2^20
             },
             "0F02A0D2EF011D8BE10140F9",
-            "movz x15, #1048576 ; add x15, x15, fp ; ldr x1, [x15]",
+            "movz x15, #16, LSL #16 ; add x15, x15, fp ; ldr x1, [x15]",
         ));
         insns.push((
             Inst::ULoad64 {
                 rd: writable_xreg(1),
                 mem: MemArg::FPOffset(1048576 + 1), // 2^20 + 1
             },
-            "4F000058030000140100100000000000EF011D8BE10140F9",
-            "ldr x15, 8 ; b 12 ; data 1048577 ; add x15, x15, fp ; ldr x1, [x15]",
+            "2F0080D20F02A0F2EF011D8BE10140F9",
+            "movz x15, #1 ; movk x15, #16, LSL #16 ; add x15, x15, fp ; ldr x1, [x15]",
         ));
 
         insns.push((
@@ -2696,7 +2699,7 @@ mod test {
                 imm: MoveWideConst::maybe_from_u64(0x0000_0000_ffff_0000).unwrap(),
             },
             "E8FFBFD2",
-            "movz x8, #4294901760",
+            "movz x8, #65535, LSL #16",
         ));
         insns.push((
             Inst::MovZ {
@@ -2704,7 +2707,7 @@ mod test {
                 imm: MoveWideConst::maybe_from_u64(0x0000_ffff_0000_0000).unwrap(),
             },
             "E8FFDFD2",
-            "movz x8, #281470681743360",
+            "movz x8, #65535, LSL #32",
         ));
         insns.push((
             Inst::MovZ {
@@ -2712,7 +2715,7 @@ mod test {
                 imm: MoveWideConst::maybe_from_u64(0xffff_0000_0000_0000).unwrap(),
             },
             "E8FFFFD2",
-            "movz x8, #18446462598732840960",
+            "movz x8, #65535, LSL #48",
         ));
 
         insns.push((
@@ -2729,7 +2732,7 @@ mod test {
                 imm: MoveWideConst::maybe_from_u64(0x0000_0000_ffff_0000).unwrap(),
             },
             "E8FFBF92",
-            "movn x8, #4294901760",
+            "movn x8, #65535, LSL #16",
         ));
         insns.push((
             Inst::MovN {
@@ -2737,7 +2740,7 @@ mod test {
                 imm: MoveWideConst::maybe_from_u64(0x0000_ffff_0000_0000).unwrap(),
             },
             "E8FFDF92",
-            "movn x8, #281470681743360",
+            "movn x8, #65535, LSL #32",
         ));
         insns.push((
             Inst::MovN {
@@ -2745,8 +2748,58 @@ mod test {
                 imm: MoveWideConst::maybe_from_u64(0xffff_0000_0000_0000).unwrap(),
             },
             "E8FFFF92",
-            "movn x8, #18446462598732840960",
+            "movn x8, #65535, LSL #48",
         ));
+
+        insns.push((
+            Inst::MovK {
+                rd: writable_xreg(12),
+                imm: MoveWideConst::maybe_from_u64(0x0000_0000_0000_0000).unwrap(),
+            },
+            "0C0080F2",
+            "movk x12, #0",
+        ));
+        insns.push((
+            Inst::MovK {
+                rd: writable_xreg(19),
+                imm: MoveWideConst::maybe_with_shift(0x0000, 16).unwrap(),
+            },
+            "1300A0F2",
+            "movk x19, #0, LSL #16",
+        ));
+        insns.push((
+            Inst::MovK {
+                rd: writable_xreg(3),
+                imm: MoveWideConst::maybe_from_u64(0x0000_0000_0000_ffff).unwrap(),
+            },
+            "E3FF9FF2",
+            "movk x3, #65535",
+        ));
+        insns.push((
+            Inst::MovK {
+                rd: writable_xreg(8),
+                imm: MoveWideConst::maybe_from_u64(0x0000_0000_ffff_0000).unwrap(),
+            },
+            "E8FFBFF2",
+            "movk x8, #65535, LSL #16",
+        ));
+        insns.push((
+            Inst::MovK {
+                rd: writable_xreg(8),
+                imm: MoveWideConst::maybe_from_u64(0x0000_ffff_0000_0000).unwrap(),
+            },
+            "E8FFDFF2",
+            "movk x8, #65535, LSL #32",
+        ));
+        insns.push((
+            Inst::MovK {
+                rd: writable_xreg(8),
+                imm: MoveWideConst::maybe_from_u64(0xffff_0000_0000_0000).unwrap(),
+            },
+            "E8FFFFF2",
+            "movk x8, #65535, LSL #48",
+        ));
+
         insns.push((
             Inst::CSel {
                 rd: writable_xreg(10),

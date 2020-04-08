@@ -21,7 +21,7 @@ use regalloc::{
 };
 
 use alloc::vec::Vec;
-use smallvec::SmallVec;
+use smallvec::{smallvec, SmallVec};
 use std::mem;
 use std::string::{String, ToString};
 
@@ -382,6 +382,12 @@ pub enum Inst {
         imm: MoveWideConst,
     },
 
+    /// A MOVK with a 16-bit immediate.
+    MovK {
+        rd: Writable<Reg>,
+        imm: MoveWideConst,
+    },
+
     /// A sign- or zero-extend operation.
     Extend {
         rd: Writable<Reg>,
@@ -657,6 +663,18 @@ pub enum Inst {
     },
 }
 
+fn count_clear_half_words(mut value: u64) -> usize {
+    let mut count = 0;
+    for _ in 0..4 {
+        if value & 0xffff == 0 {
+            count += 1;
+        }
+        value >>= 16;
+    }
+
+    count
+}
+
 impl Inst {
     /// Create a move instruction.
     pub fn mov(to_reg: Writable<Reg>, from_reg: Reg) -> Inst {
@@ -684,38 +702,57 @@ impl Inst {
 
     /// Create an instruction that loads a constant, using one of serveral options (MOVZ, MOVN,
     /// logical immediate, or constant pool).
-    pub fn load_constant(rd: Writable<Reg>, value: u64) -> Inst {
+    pub fn load_constant(rd: Writable<Reg>, value: u64) -> SmallVec<[Inst; 4]> {
         if let Some(imm) = MoveWideConst::maybe_from_u64(value) {
             // 16-bit immediate (shifted by 0, 16, 32 or 48 bits) in MOVZ
-            Inst::MovZ { rd, imm }
+            smallvec![Inst::MovZ { rd, imm }]
         } else if let Some(imm) = MoveWideConst::maybe_from_u64(!value) {
             // 16-bit immediate (shifted by 0, 16, 32 or 48 bits) in MOVN
-            Inst::MovN { rd, imm }
+            smallvec![Inst::MovN { rd, imm }]
         } else if let Some(imml) = ImmLogic::maybe_from_u64(value) {
             // Weird logical-instruction immediate in ORI using zero register
-            Inst::AluRRImmLogic {
+            smallvec![Inst::AluRRImmLogic {
                 alu_op: ALUOp::Orr64,
                 rd,
                 rn: zero_reg(),
                 imml,
-            }
+            }]
         } else {
-            // 64-bit constant inlined, with a branch over it.
-            // 1. We no longer use a constant pool, because it causes several problems:
-            //    - Requires relocations when the constant pool is moved (e.g., Baldrdash
-            //      inserts epilogue code between the blob of code we return and the
-            //      constant pool).
-            //    - Is not possible to access directly when the size of the function
-            //      body is >1MB, unless we implement longer-form addressing modes
-            //      (and then relaxation to avoid them most of the time).
-            //
-            // 2. This will be replaced soon with a MOVZ/MOVK sequence where it makes
-            //    sense.
+            let mut insts = smallvec![];
 
-            Inst::LoadConst64 {
-                rd,
-                const_data: value,
+            // If the number of 0xffff half words is greater than the number of 0x0000 half words
+            // it is more efficient to use `movn` for the first instruction.
+            let first_is_inverted = count_clear_half_words(!value) > count_clear_half_words(value);
+            // Either 0xffff or 0x0000 half words can be skipped, depending on the first
+            // instruction used.
+            let ignored_halfword = if first_is_inverted { 0xffff } else { 0 };
+            let mut first_mov_emitted = false;
+
+            for i in 0..4 {
+                let imm16 = (value >> (16 * i)) & 0xffff;
+                if imm16 != ignored_halfword {
+                    if !first_mov_emitted {
+                        first_mov_emitted = true;
+                        if first_is_inverted {
+                            let imm =
+                                MoveWideConst::maybe_with_shift(((!imm16) & 0xffff) as u16, i * 16)
+                                    .unwrap();
+                            insts.push(Inst::MovN { rd, imm });
+                        } else {
+                            let imm =
+                                MoveWideConst::maybe_with_shift(imm16 as u16, i * 16).unwrap();
+                            insts.push(Inst::MovZ { rd, imm });
+                        }
+                    } else {
+                        let imm = MoveWideConst::maybe_with_shift(imm16 as u16, i * 16).unwrap();
+                        insts.push(Inst::MovK { rd, imm });
+                    }
+                }
             }
+
+            assert!(first_mov_emitted);
+
+            insts
         }
     }
 
@@ -862,6 +899,9 @@ fn arm64_get_regs(inst: &Inst) -> InstRegUses {
         }
         &Inst::MovZ { rd, .. } | &Inst::MovN { rd, .. } => {
             iru.defined.insert(rd);
+        }
+        &Inst::MovK { rd, .. } => {
+            iru.modified.insert(rd);
         }
         &Inst::CSel { rd, rn, rm, .. } => {
             iru.defined.insert(rd);
@@ -1231,6 +1271,10 @@ fn arm64_map_regs(
             imm: imm.clone(),
         },
         &mut Inst::MovN { rd, ref imm } => Inst::MovN {
+            rd: map_wr(d, rd),
+            imm: imm.clone(),
+        },
+        &mut Inst::MovK { rd, ref imm } => Inst::MovK {
             rd: map_wr(d, rd),
             imm: imm.clone(),
         },
@@ -1905,6 +1949,11 @@ impl ShowWithRRU for Inst {
                 let rd = rd.to_reg().show_rru(mb_rru);
                 let imm = imm.show_rru(mb_rru);
                 format!("movn {}, {}", rd, imm)
+            }
+            &Inst::MovK { rd, ref imm } => {
+                let rd = rd.to_reg().show_rru(mb_rru);
+                let imm = imm.show_rru(mb_rru);
+                format!("movk {}, {}", rd, imm)
             }
             &Inst::CSel { rd, rn, rm, cond } => {
                 let rd = rd.to_reg().show_rru(mb_rru);
