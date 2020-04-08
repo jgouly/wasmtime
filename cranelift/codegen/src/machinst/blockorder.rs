@@ -9,6 +9,7 @@ use crate::machinst::*;
 struct BlockRPO {
     visited: Vec<bool>,
     postorder: Vec<BlockIndex>,
+    deferred_last: Option<BlockIndex>,
 }
 
 impl BlockRPO {
@@ -16,6 +17,7 @@ impl BlockRPO {
         BlockRPO {
             visited: vec![false; vcode.num_blocks()],
             postorder: vec![],
+            deferred_last: None,
         }
     }
 
@@ -26,12 +28,25 @@ impl BlockRPO {
                 self.visit(vcode, *succ);
             }
         }
+
+        let (start, end) = &vcode.block_ranges[block as usize];
+        for i in *start..*end {
+            if vcode.insts[i as usize].is_epilogue_placeholder() {
+                debug_assert!(self.deferred_last.is_none());
+                self.deferred_last = Some(block);
+                return;
+            }
+        }
+
         self.postorder.push(block);
     }
 
     fn rpo(self) -> Vec<BlockIndex> {
         let mut rpo = self.postorder;
         rpo.reverse();
+        if let Some(block) = self.deferred_last {
+            rpo.push(block);
+        }
         rpo
     }
 }
