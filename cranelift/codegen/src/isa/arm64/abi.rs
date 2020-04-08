@@ -53,16 +53,26 @@ static BALDRDASH_TLS_REG: u8 = 23;
 // Keep these lists in sync with the NonAllocatableMask set in Spidermonkey's
 // Architecture-arm64.cpp.
 
-static BALDRDASH_JIT_CALLEE_SAVED_GPR: &[usize] = &[
-    16, /* ip1 = scratch */
-    17, /* ip2 = scratch */
-    18, /* platform-specific TLS */
+// Indexed by physical register number.
+#[rustfmt::skip]
+static BALDRDASH_JIT_CALLEE_SAVED_GPR: &[bool] = &[
+    /* 0 = */ false, false, false, false, false, false, false, false,
+    /* 8 = */ false, false, false, false, false, false, false, false,
+    /* 16 = */ true /* x16 / ip1 */, true /* x17 / ip2 */, true /* x18 / TLS */, false,
+    /* 20 = */ false, false, false, false,
+    /* 24 = */ false, false, false, false,
     // There should be 28, the pseudo stack pointer in this list, however the wasm stubs trash it
     // gladly right now.
-    30, /* FP */
-    31, /* SP */
+    /* 28 = */ false, false, true /* x30 = FP */, true /* x31 = SP */
 ];
-static BALDRDASH_JIT_CALLEE_SAVED_FPU: &[usize] = &[31]; // v31 == d31 in Spidermonkey.
+
+#[rustfmt::skip]
+static BALDRDASH_JIT_CALLEE_SAVED_FPU: &[bool] = &[
+    /* 0 = */ false, false, false, false, false, false, false, false,
+    /* 8 = */ false, false, false, false, false, false, false, false,
+    /* 16 = */ false, false, false, false, false, false, false, false,
+    /* 24 = */ false, false, false, false, false, false, false, true /* v31 / d31 */
+];
 
 /// Try to fill a Baldrdash register, returning it if it was found.
 fn try_fill_baldrdash_reg(call_conv: isa::CallConv, param: &ir::AbiParam) -> Option<ABIArg> {
@@ -296,14 +306,14 @@ fn is_callee_save(call_conv: isa::CallConv, r: RealReg) -> bool {
         match r.get_class() {
             RegClass::I64 => {
                 let enc = r.get_hw_encoding();
-                if BALDRDASH_JIT_CALLEE_SAVED_GPR.iter().any(|&cs| cs == enc) {
+                if BALDRDASH_JIT_CALLEE_SAVED_GPR[enc] {
                     return true;
                 }
                 // Otherwise, fall through to preserve native ABI registers.
             }
             RegClass::V128 => {
                 let enc = r.get_hw_encoding();
-                if BALDRDASH_JIT_CALLEE_SAVED_FPU.iter().any(|&cs| cs == enc) {
+                if BALDRDASH_JIT_CALLEE_SAVED_FPU[enc] {
                     return true;
                 }
                 // Otherwise, fall through to preserve native ABI registers.
@@ -348,14 +358,14 @@ fn is_caller_save(call_conv: isa::CallConv, r: RealReg) -> bool {
         match r.get_class() {
             RegClass::I64 => {
                 let enc = r.get_hw_encoding();
-                if !BALDRDASH_JIT_CALLEE_SAVED_GPR.iter().any(|&cs| cs == enc) {
+                if !BALDRDASH_JIT_CALLEE_SAVED_GPR[enc] {
                     return true;
                 }
                 // Otherwise, fall through to preserve native's ABI caller-saved.
             }
             RegClass::V128 => {
                 let enc = r.get_hw_encoding();
-                if !BALDRDASH_JIT_CALLEE_SAVED_FPU.iter().any(|&cs| cs == enc) {
+                if !BALDRDASH_JIT_CALLEE_SAVED_FPU[enc] {
                     return true;
                 }
                 // Otherwise, fall through to preserve native's ABI caller-saved.
