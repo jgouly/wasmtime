@@ -14,11 +14,11 @@ use crate::ir::{ExternalName, GlobalValue, JumpTable, Opcode, SourceLoc, TrapCod
 use crate::machinst::*;
 
 use regalloc::Map as RegallocMap;
-use regalloc::{InstRegUses, Set};
 use regalloc::{
     RealReg, RealRegUniverse, Reg, RegClass, RegClassInfo, SpillSlot, VirtualReg, Writable,
     NUM_REG_CLASSES,
 };
+use regalloc::{RegUsageCollector, Set};
 
 use alloc::vec::Vec;
 use smallvec::{smallvec, SmallVec};
@@ -804,85 +804,79 @@ impl Inst {
 //=============================================================================
 // Instructions: get_regs
 
-fn memarg_regs(memarg: &MemArg, used: &mut Set<Reg>, modified: &mut Set<Writable<Reg>>) {
+fn memarg_regs(memarg: &MemArg, collector: &mut RegUsageCollector) {
     match memarg {
         &MemArg::Unscaled(reg, ..) | &MemArg::UnsignedOffset(reg, ..) => {
-            used.insert(reg);
+            collector.add_use(reg);
         }
         &MemArg::RegReg(r1, r2, ..)
         | &MemArg::RegScaled(r1, r2, ..)
         | &MemArg::RegScaledExtended(r1, r2, ..) => {
-            used.insert(r1);
-            used.insert(r2);
+            collector.add_use(r1);
+            collector.add_use(r2);
         }
         &MemArg::Label(..) => {}
         &MemArg::PreIndexed(reg, ..) | &MemArg::PostIndexed(reg, ..) => {
-            modified.insert(reg);
+            collector.add_mod(reg);
         }
         &MemArg::FPOffset(..) => {
-            used.insert(fp_reg());
+            collector.add_use(fp_reg());
         }
         &MemArg::SPOffset(..) => {
-            used.insert(stack_reg());
+            collector.add_use(stack_reg());
         }
     }
 }
 
-fn pairmemarg_regs(
-    pairmemarg: &PairMemArg,
-    used: &mut Set<Reg>,
-    modified: &mut Set<Writable<Reg>>,
-) {
+fn pairmemarg_regs(pairmemarg: &PairMemArg, collector: &mut RegUsageCollector) {
     match pairmemarg {
         &PairMemArg::SignedOffset(reg, ..) => {
-            used.insert(reg);
+            collector.add_use(reg);
         }
         &PairMemArg::PreIndexed(reg, ..) | &PairMemArg::PostIndexed(reg, ..) => {
-            modified.insert(reg);
+            collector.add_mod(reg);
         }
     }
 }
 
-fn arm64_get_regs(inst: &Inst) -> InstRegUses {
-    let mut iru = InstRegUses::new();
-
+fn arm64_get_regs(inst: &Inst, collector: &mut RegUsageCollector) {
     match inst {
         &Inst::AluRRR { rd, rn, rm, .. } => {
-            iru.defined.insert(rd);
-            iru.used.insert(rn);
-            iru.used.insert(rm);
+            collector.add_def(rd);
+            collector.add_use(rn);
+            collector.add_use(rm);
         }
         &Inst::AluRRRR { rd, rn, rm, ra, .. } => {
-            iru.defined.insert(rd);
-            iru.used.insert(rn);
-            iru.used.insert(rm);
-            iru.used.insert(ra);
+            collector.add_def(rd);
+            collector.add_use(rn);
+            collector.add_use(rm);
+            collector.add_use(ra);
         }
         &Inst::AluRRImm12 { rd, rn, .. } => {
-            iru.defined.insert(rd);
-            iru.used.insert(rn);
+            collector.add_def(rd);
+            collector.add_use(rn);
         }
         &Inst::AluRRImmLogic { rd, rn, .. } => {
-            iru.defined.insert(rd);
-            iru.used.insert(rn);
+            collector.add_def(rd);
+            collector.add_use(rn);
         }
         &Inst::AluRRImmShift { rd, rn, .. } => {
-            iru.defined.insert(rd);
-            iru.used.insert(rn);
+            collector.add_def(rd);
+            collector.add_use(rn);
         }
         &Inst::AluRRRShift { rd, rn, rm, .. } => {
-            iru.defined.insert(rd);
-            iru.used.insert(rn);
-            iru.used.insert(rm);
+            collector.add_def(rd);
+            collector.add_use(rn);
+            collector.add_use(rm);
         }
         &Inst::AluRRRExtend { rd, rn, rm, .. } => {
-            iru.defined.insert(rd);
-            iru.used.insert(rn);
-            iru.used.insert(rm);
+            collector.add_def(rd);
+            collector.add_use(rn);
+            collector.add_use(rm);
         }
         &Inst::BitRR { rd, rn, .. } => {
-            iru.defined.insert(rd);
-            iru.used.insert(rn);
+            collector.add_def(rd);
+            collector.add_use(rn);
         }
         &Inst::ULoad8 { rd, ref mem, .. }
         | &Inst::SLoad8 { rd, ref mem, .. }
@@ -891,151 +885,151 @@ fn arm64_get_regs(inst: &Inst) -> InstRegUses {
         | &Inst::ULoad32 { rd, ref mem, .. }
         | &Inst::SLoad32 { rd, ref mem, .. }
         | &Inst::ULoad64 { rd, ref mem, .. } => {
-            iru.defined.insert(rd);
-            memarg_regs(mem, &mut iru.used, &mut iru.modified);
+            collector.add_def(rd);
+            memarg_regs(mem, collector);
         }
         &Inst::Store8 { rd, ref mem, .. }
         | &Inst::Store16 { rd, ref mem, .. }
         | &Inst::Store32 { rd, ref mem, .. }
         | &Inst::Store64 { rd, ref mem, .. } => {
-            iru.used.insert(rd);
-            memarg_regs(mem, &mut iru.used, &mut iru.modified);
+            collector.add_use(rd);
+            memarg_regs(mem, collector);
         }
         &Inst::StoreP64 {
             rt, rt2, ref mem, ..
         } => {
-            iru.used.insert(rt);
-            iru.used.insert(rt2);
-            pairmemarg_regs(mem, &mut iru.used, &mut iru.modified);
+            collector.add_use(rt);
+            collector.add_use(rt2);
+            pairmemarg_regs(mem, collector);
         }
         &Inst::LoadP64 {
             rt, rt2, ref mem, ..
         } => {
-            iru.defined.insert(rt);
-            iru.defined.insert(rt2);
-            pairmemarg_regs(mem, &mut iru.used, &mut iru.modified);
+            collector.add_def(rt);
+            collector.add_def(rt2);
+            pairmemarg_regs(mem, collector);
         }
         &Inst::Mov { rd, rm } => {
-            iru.defined.insert(rd);
-            iru.used.insert(rm);
+            collector.add_def(rd);
+            collector.add_use(rm);
         }
         &Inst::Mov32 { rd, rm } => {
-            iru.defined.insert(rd);
-            iru.used.insert(rm);
+            collector.add_def(rd);
+            collector.add_use(rm);
         }
         &Inst::MovZ { rd, .. } | &Inst::MovN { rd, .. } => {
-            iru.defined.insert(rd);
+            collector.add_def(rd);
         }
         &Inst::MovK { rd, .. } => {
-            iru.modified.insert(rd);
+            collector.add_mod(rd);
         }
         &Inst::CSel { rd, rn, rm, .. } => {
-            iru.defined.insert(rd);
-            iru.used.insert(rn);
-            iru.used.insert(rm);
+            collector.add_def(rd);
+            collector.add_use(rn);
+            collector.add_use(rm);
         }
         &Inst::CSet { rd, .. } => {
-            iru.defined.insert(rd);
+            collector.add_def(rd);
         }
         &Inst::FpuMove64 { rd, rn } => {
-            iru.defined.insert(rd);
-            iru.used.insert(rn);
+            collector.add_def(rd);
+            collector.add_use(rn);
         }
         &Inst::FpuRR { rd, rn, .. } => {
-            iru.defined.insert(rd);
-            iru.used.insert(rn);
+            collector.add_def(rd);
+            collector.add_use(rn);
         }
         &Inst::FpuRRR { rd, rn, rm, .. } => {
-            iru.defined.insert(rd);
-            iru.used.insert(rn);
-            iru.used.insert(rm);
+            collector.add_def(rd);
+            collector.add_use(rn);
+            collector.add_use(rm);
         }
         &Inst::FpuRRRR { rd, rn, rm, ra, .. } => {
-            iru.defined.insert(rd);
-            iru.used.insert(rn);
-            iru.used.insert(rm);
-            iru.used.insert(ra);
+            collector.add_def(rd);
+            collector.add_use(rn);
+            collector.add_use(rm);
+            collector.add_use(ra);
         }
         &Inst::FpuCmp32 { rn, rm } | &Inst::FpuCmp64 { rn, rm } => {
-            iru.used.insert(rn);
-            iru.used.insert(rm);
+            collector.add_use(rn);
+            collector.add_use(rm);
         }
         &Inst::FpuLoad32 { rd, ref mem, .. } => {
-            iru.defined.insert(rd);
-            memarg_regs(mem, &mut iru.used, &mut iru.modified);
+            collector.add_def(rd);
+            memarg_regs(mem, collector);
         }
         &Inst::FpuLoad64 { rd, ref mem, .. } => {
-            iru.defined.insert(rd);
-            memarg_regs(mem, &mut iru.used, &mut iru.modified);
+            collector.add_def(rd);
+            memarg_regs(mem, collector);
         }
         &Inst::FpuLoad128 { rd, ref mem, .. } => {
-            iru.defined.insert(rd);
-            memarg_regs(mem, &mut iru.used, &mut iru.modified);
+            collector.add_def(rd);
+            memarg_regs(mem, collector);
         }
         &Inst::FpuStore32 { rd, ref mem, .. } => {
-            iru.used.insert(rd);
-            memarg_regs(mem, &mut iru.used, &mut iru.modified);
+            collector.add_use(rd);
+            memarg_regs(mem, collector);
         }
         &Inst::FpuStore64 { rd, ref mem, .. } => {
-            iru.used.insert(rd);
-            memarg_regs(mem, &mut iru.used, &mut iru.modified);
+            collector.add_use(rd);
+            memarg_regs(mem, collector);
         }
         &Inst::FpuStore128 { rd, ref mem, .. } => {
-            iru.used.insert(rd);
-            memarg_regs(mem, &mut iru.used, &mut iru.modified);
+            collector.add_use(rd);
+            memarg_regs(mem, collector);
         }
         &Inst::LoadFpuConst32 { rd, .. } | &Inst::LoadFpuConst64 { rd, .. } => {
-            iru.defined.insert(rd);
+            collector.add_def(rd);
         }
         &Inst::FpuToInt { rd, rn, .. } => {
-            iru.defined.insert(rd);
-            iru.used.insert(rn);
+            collector.add_def(rd);
+            collector.add_use(rn);
         }
         &Inst::IntToFpu { rd, rn, .. } => {
-            iru.defined.insert(rd);
-            iru.used.insert(rn);
+            collector.add_def(rd);
+            collector.add_use(rn);
         }
         &Inst::FpuCSel32 { rd, rn, rm, .. } | &Inst::FpuCSel64 { rd, rn, rm, .. } => {
-            iru.defined.insert(rd);
-            iru.used.insert(rn);
-            iru.used.insert(rm);
+            collector.add_def(rd);
+            collector.add_use(rn);
+            collector.add_use(rm);
         }
         &Inst::FpuRound { rd, rn, .. } => {
-            iru.defined.insert(rd);
-            iru.used.insert(rn);
+            collector.add_def(rd);
+            collector.add_use(rn);
         }
         &Inst::MovToVec64 { rd, rn } => {
-            iru.defined.insert(rd);
-            iru.used.insert(rn);
+            collector.add_def(rd);
+            collector.add_use(rn);
         }
         &Inst::MovFromVec64 { rd, rn } => {
-            iru.defined.insert(rd);
-            iru.used.insert(rn);
+            collector.add_def(rd);
+            collector.add_use(rn);
         }
         &Inst::VecRRR { rd, rn, rm, .. } => {
-            iru.defined.insert(rd);
-            iru.used.insert(rn);
-            iru.used.insert(rm);
+            collector.add_def(rd);
+            collector.add_use(rn);
+            collector.add_use(rm);
         }
         &Inst::MovToNZCV { rn } => {
-            iru.used.insert(rn);
+            collector.add_use(rn);
         }
         &Inst::MovFromNZCV { rd } => {
-            iru.defined.insert(rd);
+            collector.add_def(rd);
         }
         &Inst::CondSet { rd, .. } => {
-            iru.defined.insert(rd);
+            collector.add_def(rd);
         }
         &Inst::Extend { rd, rn, .. } => {
-            iru.defined.insert(rd);
-            iru.used.insert(rn);
+            collector.add_def(rd);
+            collector.add_use(rn);
         }
         &Inst::Jump { .. } | &Inst::Ret { .. } | &Inst::EpiloguePlaceholder { .. } => {}
         &Inst::Call {
             ref uses, ref defs, ..
         } => {
-            iru.used.union(uses);
-            iru.defined.union(defs);
+            collector.add_uses(uses);
+            collector.add_defs(defs);
         }
         &Inst::CallInd {
             ref uses,
@@ -1043,48 +1037,39 @@ fn arm64_get_regs(inst: &Inst) -> InstRegUses {
             rn,
             ..
         } => {
-            iru.used.union(uses);
-            iru.defined.union(defs);
-            iru.used.insert(rn);
+            collector.add_uses(uses);
+            collector.add_defs(defs);
+            collector.add_use(rn);
         }
         &Inst::CondBr { ref kind, .. }
         | &Inst::CondBrLowered { ref kind, .. }
         | &Inst::CondBrLoweredCompound { ref kind, .. } => match kind {
             CondBrKind::Zero(rt) | CondBrKind::NotZero(rt) => {
-                iru.used.insert(*rt);
+                collector.add_use(*rt);
             }
             CondBrKind::Cond(_) => {}
         },
         &Inst::IndirectBr { rn, .. } => {
-            iru.used.insert(rn);
+            collector.add_use(rn);
         }
         &Inst::Nop | Inst::Nop4 => {}
         &Inst::Brk => {}
         &Inst::Udf { .. } => {}
         &Inst::Adr { rd, .. } => {
-            iru.defined.insert(rd);
+            collector.add_def(rd);
         }
         &Inst::Word4 { .. } | &Inst::Word8 { .. } => {}
         &Inst::JTSequence {
             ridx, rtmp1, rtmp2, ..
         } => {
-            iru.used.insert(ridx);
-            iru.defined.insert(rtmp1);
-            iru.defined.insert(rtmp2);
+            collector.add_use(ridx);
+            collector.add_def(rtmp1);
+            collector.add_def(rtmp2);
         }
         &Inst::LoadConst64 { rd, .. } | &Inst::LoadExtName { rd, .. } => {
-            iru.defined.insert(rd);
+            collector.add_def(rd);
         }
     }
-
-    // Enforce the invariant that if a register is in the 'modify' set, it
-    // should not be in 'defined' or 'used'.
-    iru.defined.remove(&iru.modified);
-    iru.used.remove(&Set::from_vec(
-        iru.modified.iter().map(|r| r.to_reg()).collect(),
-    ));
-
-    iru
 }
 
 //=============================================================================
@@ -1638,8 +1623,8 @@ fn arm64_map_regs(
 // Instructions: misc functions and external interface
 
 impl MachInst for Inst {
-    fn get_regs(&self) -> InstRegUses {
-        arm64_get_regs(self)
+    fn get_regs(&self, collector: &mut RegUsageCollector) {
+        arm64_get_regs(self, collector)
     }
 
     fn map_regs(
@@ -1880,7 +1865,7 @@ impl ShowWithRRU for Inst {
         }
 
         match self {
-            &Inst::Nop => "".to_string(),
+            &Inst::Nop => "nop-zero-len".to_string(),
             &Inst::Nop4 => "nop".to_string(),
             &Inst::AluRRR { alu_op, rd, rn, rm } => {
                 let (op, is32) = op_is32(alu_op);

@@ -13,8 +13,8 @@ use crate::ir::{FuncRef, GlobalValue, Type, Value};
 use crate::isa::TargetIsa;
 use crate::machinst::*;
 
-use regalloc::InstRegUses;
 use regalloc::Map as RegallocMap;
+use regalloc::RegUsageCollector;
 use regalloc::Set;
 use regalloc::{
     RealReg, RealRegUniverse, Reg, RegClass, RegClassInfo, SpillSlot, VirtualReg, Writable,
@@ -1268,12 +1268,11 @@ impl fmt::Debug for Inst {
 // Instructions and subcomponents: get_regs
 
 impl Addr {
-    // Add the regs mentioned by |self| to |set|.  The role in which they
-    // appear (def/mod/use) is meaningless here, hence the use of plain |set|.
-    fn get_regs(&self, set: &mut Set<Reg>) {
+    // Add the regs mentioned by |self| to |collector|.
+    fn get_regs_as_uses(&self, collector: &mut RegUsageCollector) {
         match self {
             Addr::IR { simm32: _, base } => {
-                set.insert(*base);
+                collector.add_use(*base);
             }
             Addr::IRRS {
                 simm32: _,
@@ -1281,41 +1280,39 @@ impl Addr {
                 index,
                 shift: _,
             } => {
-                set.insert(*base);
-                set.insert(*index);
+                collector.add_use(*base);
+                collector.add_use(*index);
             }
         }
     }
 }
 
 impl RMI {
-    // Add the regs mentioned by |self| to |set|.  Same comment as above.
-    fn get_regs(&self, set: &mut Set<Reg>) {
+    // Add the regs mentioned by |self| to |collector|.
+    fn get_regs_as_uses(&self, collector: &mut RegUsageCollector) {
         match self {
-            RMI::R { reg } => set.insert(*reg),
-            RMI::M { addr } => addr.get_regs(set),
+            RMI::R { reg } => collector.add_use(*reg),
+            RMI::M { addr } => addr.get_regs_as_uses(collector),
             RMI::I { simm32: _ } => {}
         }
     }
 }
 
 impl RM {
-    // Add the regs mentioned by |self| to |set|.  Same comment as above.
-    fn get_regs(&self, set: &mut Set<Reg>) {
+    // Add the regs mentioned by |self| to |collector|.
+    fn get_regs_as_uses(&self, collector: &mut RegUsageCollector) {
         match self {
-            RM::R { reg } => set.insert(*reg),
-            RM::M { addr } => addr.get_regs(set),
+            RM::R { reg } => collector.add_use(*reg),
+            RM::M { addr } => addr.get_regs_as_uses(collector),
         }
     }
 }
 
-fn x64_get_regs(inst: &Inst) -> InstRegUses {
+fn x64_get_regs(inst: &Inst, collector: &mut RegUsageCollector) {
     // This is a bit subtle.  If some register is in the modified set, then it
     // may not be in either the use or def sets.  However, enforcing that
-    // directly is somewhat difficult.  Hence we postprocess the sets at the
-    // end of this function.
-    let mut iru = InstRegUses::new();
-
+    // directly is somewhat difficult.  Instead, regalloc.rs will "fix" this
+    // for us by removing the the modified set from the use and def sets.
     match inst {
         // ** Nop
         Inst::Alu_RMI_R {
@@ -1324,43 +1321,43 @@ fn x64_get_regs(inst: &Inst) -> InstRegUses {
             src,
             dst,
         } => {
-            src.get_regs(&mut iru.used);
-            iru.modified.insert(Writable::from_reg(*dst));
+            src.get_regs_as_uses(collector);
+            collector.add_mod(Writable::from_reg(*dst));
         }
         Inst::Imm_R {
             dstIs64: _,
             simm64: _,
             dst,
         } => {
-            iru.defined.insert(Writable::from_reg(*dst));
+            collector.add_def(Writable::from_reg(*dst));
         }
         Inst::Mov_R_R { is64: _, src, dst } => {
-            iru.used.insert(*src);
-            iru.defined.insert(Writable::from_reg(*dst));
+            collector.add_use(*src);
+            collector.add_def(Writable::from_reg(*dst));
         }
         Inst::MovZX_M_R {
             extMode: _,
             addr,
             dst,
         } => {
-            addr.get_regs(&mut iru.used);
-            iru.defined.insert(Writable::from_reg(*dst));
+            addr.get_regs_as_uses(collector);
+            collector.add_def(Writable::from_reg(*dst));
         }
         Inst::Mov64_M_R { addr, dst } => {
-            addr.get_regs(&mut iru.used);
-            iru.defined.insert(Writable::from_reg(*dst));
+            addr.get_regs_as_uses(collector);
+            collector.add_def(Writable::from_reg(*dst));
         }
         Inst::MovSX_M_R {
             extMode: _,
             addr,
             dst,
         } => {
-            addr.get_regs(&mut iru.used);
-            iru.defined.insert(Writable::from_reg(*dst));
+            addr.get_regs_as_uses(collector);
+            collector.add_def(Writable::from_reg(*dst));
         }
         Inst::Mov_R_M { size: _, src, addr } => {
-            iru.used.insert(*src);
-            addr.get_regs(&mut iru.used);
+            collector.add_use(*src);
+            addr.get_regs_as_uses(collector);
         }
         Inst::Shift_R {
             is64: _,
@@ -1369,20 +1366,20 @@ fn x64_get_regs(inst: &Inst) -> InstRegUses {
             dst,
         } => {
             if *nBits == 0 {
-                iru.used.insert(reg_RCX());
+                collector.add_use(reg_RCX());
             }
-            iru.modified.insert(Writable::from_reg(*dst));
+            collector.add_mod(Writable::from_reg(*dst));
         }
         Inst::Cmp_RMI_R { size: _, src, dst } => {
-            src.get_regs(&mut iru.used);
-            iru.used.insert(*dst); // yes, really |iru.used|
+            src.get_regs_as_uses(collector);
+            collector.add_use(*dst); // yes, really |add_use|
         }
         Inst::Push64 { src } => {
-            src.get_regs(&mut iru.used);
-            iru.modified.insert(Writable::from_reg(reg_RSP()));
+            src.get_regs_as_uses(collector);
+            collector.add_mod(Writable::from_reg(reg_RSP()));
         }
         Inst::Pop64 { dst } => {
-            iru.defined.insert(Writable::from_reg(*dst));
+            collector.add_def(Writable::from_reg(*dst));
         }
         Inst::CallKnown {
             dest: _,
@@ -1393,7 +1390,7 @@ fn x64_get_regs(inst: &Inst) -> InstRegUses {
             unimplemented!();
         }
         Inst::CallUnknown { dest } => {
-            dest.get_regs(&mut iru.used);
+            dest.get_regs_as_uses(collector);
         }
         Inst::Ret {} => {}
         Inst::EpiloguePlaceholder {} => {}
@@ -1409,21 +1406,13 @@ fn x64_get_regs(inst: &Inst) -> InstRegUses {
         // ** JmpCondCompound
         //
         //Inst::JmpUnknown { target } => {
-        //    target.get_regs(&mut iru.used);
+        //    target.get_regs_as_uses(collector);
         //}
         Inst::Nop { .. }
         | Inst::JmpCond { .. }
         | Inst::JmpCondCompound { .. }
         | Inst::JmpUnknown { .. } => unimplemented!("x64_get_regs inst"),
     }
-
-    // Enforce invariants described above.
-    iru.defined.remove(&iru.modified);
-    iru.used.remove(&Set::from_vec(
-        iru.modified.iter().map(|r| r.to_reg()).collect(),
-    ));
-
-    iru
 }
 
 //=============================================================================
@@ -2414,8 +2403,8 @@ fn x64_emit<O: MachSectionOutput>(inst: &Inst, sink: &mut O) {
 // Instructions: misc functions and external interface
 
 impl MachInst for Inst {
-    fn get_regs(&self) -> InstRegUses {
-        x64_get_regs(&self)
+    fn get_regs(&self, collector: &mut RegUsageCollector) {
+        x64_get_regs(&self, collector)
     }
 
     fn map_regs(

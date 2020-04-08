@@ -24,7 +24,7 @@ use crate::settings;
 
 use regalloc::Function as RegallocFunction;
 use regalloc::Set as RegallocSet;
-use regalloc::{BlockIx, InstIx, InstRegUses, Range, RegAllocResult, RegClass};
+use regalloc::{BlockIx, InstIx, Range, RegAllocResult, RegClass, RegUsageCollector};
 
 use alloc::boxed::Box;
 use alloc::vec::Vec;
@@ -586,8 +586,8 @@ impl<I: VCodeInst> RegallocFunction for VCode<I> {
         }
     }
 
-    fn get_regs(&self, insn: &I) -> InstRegUses {
-        insn.get_regs()
+    fn get_regs(insn: &I, collector: &mut RegUsageCollector) {
+        insn.get_regs(collector)
     }
 
     fn map_regs(
