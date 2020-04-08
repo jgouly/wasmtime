@@ -1364,7 +1364,7 @@ fn lower_insn_to_regs<C: LowerCtx<Inst>>(ctx: &mut C, insn: IRInst) {
                 shiftop: ShiftOpAndAmt::new(
                     ShiftOp::LSR,
                     ShiftOpShiftImm::maybe_from_shift(4).unwrap(),
-                    ),
+                ),
             });
 
             lower_constant_u64(ctx, tmp_constant, 0x0f0f0f0f0f0f0f0f);
@@ -1387,7 +1387,7 @@ fn lower_insn_to_regs<C: LowerCtx<Inst>>(ctx: &mut C, insn: IRInst) {
                 shiftop: ShiftOpAndAmt::new(
                     ShiftOp::LSL,
                     ShiftOpShiftImm::maybe_from_shift(8).unwrap(),
-                    ),
+                ),
             });
 
             // add xt, xt, xt, LSL #16
@@ -1399,7 +1399,7 @@ fn lower_insn_to_regs<C: LowerCtx<Inst>>(ctx: &mut C, insn: IRInst) {
                 shiftop: ShiftOpAndAmt::new(
                     ShiftOp::LSL,
                     ShiftOpShiftImm::maybe_from_shift(16).unwrap(),
-                    ),
+                ),
             });
 
             // add xt, xt, xt, LSL #32
@@ -1411,7 +1411,7 @@ fn lower_insn_to_regs<C: LowerCtx<Inst>>(ctx: &mut C, insn: IRInst) {
                 shiftop: ShiftOpAndAmt::new(
                     ShiftOp::LSL,
                     ShiftOpShiftImm::maybe_from_shift(32).unwrap(),
-                    ),
+                ),
             });
 
             // lsr xd, xt, #56
@@ -2072,11 +2072,19 @@ fn lower_insn_to_regs<C: LowerCtx<Inst>>(ctx: &mut C, insn: IRInst) {
             ctx.emit(Inst::MovFromVec64 { rd: tmp1, rn: rn });
             ctx.emit(Inst::MovFromVec64 { rd: tmp2, rn: rm });
             let imml = if bits == 32 {
-                // 0x8000_0000
-                ImmLogic::from_raw(/* n = */ false, /* r = */ 1, /* s = */ 0)
+                ImmLogic::from_raw(
+                    /* value = */ 0x8000_0000,
+                    /* n = */ false,
+                    /* r = */ 1,
+                    /* s = */ 0,
+                )
             } else {
-                // 0x8000_0000_0000_0000
-                ImmLogic::from_raw(/* n = */ true, /* r = */ 1, /* s = */ 0)
+                ImmLogic::from_raw(
+                    /* value = */ 0x8000_0000_0000_0000,
+                    /* n = */ true,
+                    /* r = */ 1,
+                    /* s = */ 0,
+                )
             };
             let alu_op = choose_32_64(ty, ALUOp::And32, ALUOp::And64);
             ctx.emit(Inst::AluRRImmLogic {
