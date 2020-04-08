@@ -9,6 +9,7 @@ use crate::machinst::*;
 
 use regalloc::RealRegUniverse;
 
+use core::convert::TryFrom;
 use std::string::String;
 
 /// A signed, scaled 7-bit offset.
@@ -169,7 +170,10 @@ impl Imm12 {
 
 /// An immediate for logical instructions.
 #[derive(Clone, Debug)]
+#[cfg_attr(test, derive(PartialEq))]
 pub struct ImmLogic {
+    /// The actual value.
+    value: u64,
     /// `N` flag.
     pub N: bool,
     /// `S` field: element size and element bits.
@@ -180,9 +184,193 @@ pub struct ImmLogic {
 
 impl ImmLogic {
     /// Compute an ImmLogic from raw bits, if possible.
-    pub fn maybe_from_u64(_val: u64) -> Option<ImmLogic> {
-        // TODO: implement.
-        None
+    pub fn maybe_from_u64(value: u64, ty: Type) -> Option<ImmLogic> {
+        // Note: This function is a port of VIXL's Assembler::IsImmLogical.
+
+        if ty != I64 && ty != I32 {
+            return None;
+        }
+
+        let original_value = value;
+
+        let value = if ty == I32 {
+            // To handle 32-bit logical immediates, the very easiest thing is to repeat
+            // the input value twice to make a 64-bit word. The correct encoding of that
+            // as a logical immediate will also be the correct encoding of the 32-bit
+            // value.
+
+            // Avoid making the assumption that the most-significant 32 bits are zero by
+            // shifting the value left and duplicating it.
+            let value = value << 32;
+            value | value >> 32
+        } else {
+            value
+        };
+
+        // Logical immediates are encoded using parameters n, imm_s and imm_r using
+        // the following table:
+        //
+        //    N   imms    immr    size        S             R
+        //    1  ssssss  rrrrrr    64    UInt(ssssss)  UInt(rrrrrr)
+        //    0  0sssss  xrrrrr    32    UInt(sssss)   UInt(rrrrr)
+        //    0  10ssss  xxrrrr    16    UInt(ssss)    UInt(rrrr)
+        //    0  110sss  xxxrrr     8    UInt(sss)     UInt(rrr)
+        //    0  1110ss  xxxxrr     4    UInt(ss)      UInt(rr)
+        //    0  11110s  xxxxxr     2    UInt(s)       UInt(r)
+        // (s bits must not be all set)
+        //
+        // A pattern is constructed of size bits, where the least significant S+1 bits
+        // are set. The pattern is rotated right by R, and repeated across a 32 or
+        // 64-bit value, depending on destination register width.
+        //
+        // Put another way: the basic format of a logical immediate is a single
+        // contiguous stretch of 1 bits, repeated across the whole word at intervals
+        // given by a power of 2. To identify them quickly, we first locate the
+        // lowest stretch of 1 bits, then the next 1 bit above that; that combination
+        // is different for every logical immediate, so it gives us all the
+        // information we need to identify the only logical immediate that our input
+        // could be, and then we simply check if that's the value we actually have.
+        //
+        // (The rotation parameter does give the possibility of the stretch of 1 bits
+        // going 'round the end' of the word. To deal with that, we observe that in
+        // any situation where that happens the bitwise NOT of the value is also a
+        // valid logical immediate. So we simply invert the input whenever its low bit
+        // is set, and then we know that the rotated case can't arise.)
+        let (value, inverted) = if value & 1 == 1 {
+            (!value, true)
+        } else {
+            (value, false)
+        };
+
+        if value == 0 {
+            return None;
+        }
+
+        // The basic analysis idea: imagine our input word looks like this.
+        //
+        //    0011111000111110001111100011111000111110001111100011111000111110
+        //                                                          c  b    a
+        //                                                          |<--d-->|
+        //
+        // We find the lowest set bit (as an actual power-of-2 value, not its index)
+        // and call it a. Then we add a to our original number, which wipes out the
+        // bottommost stretch of set bits and replaces it with a 1 carried into the
+        // next zero bit. Then we look for the new lowest set bit, which is in
+        // position b, and subtract it, so now our number is just like the original
+        // but with the lowest stretch of set bits completely gone. Now we find the
+        // lowest set bit again, which is position c in the diagram above. Then we'll
+        // measure the distance d between bit positions a and c (using CLZ), and that
+        // tells us that the only valid logical immediate that could possibly be equal
+        // to this number is the one in which a stretch of bits running from a to just
+        // below b is replicated every d bits.
+        fn lowest_set_bit(value: u64) -> u64 {
+            let bit = value.trailing_zeros();
+            1u64.checked_shl(bit).unwrap_or(0)
+        }
+        let a = lowest_set_bit(value);
+        assert_ne!(0, a);
+        let value_plus_a = value.wrapping_add(a);
+        let b = lowest_set_bit(value_plus_a);
+        let value_plus_a_minus_b = value_plus_a - b;
+        let c = lowest_set_bit(value_plus_a_minus_b);
+
+        let (d, clz_a, out_n, mask) = if c != 0 {
+            // The general case, in which there is more than one stretch of set bits.
+            // Compute the repeat distance d, and set up a bitmask covering the basic
+            // unit of repetition (i.e. a word with the bottom d bits set). Also, in all
+            // of these cases the N bit of the output will be zero.
+            let clz_a = a.leading_zeros();
+            let clz_c = c.leading_zeros();
+            let d = clz_a - clz_c;
+            let mask = (1 << d) - 1;
+            (d, clz_a, 0, mask)
+        } else {
+            (64, a.leading_zeros(), 1, u64::max_value())
+        };
+
+        // If the repeat period d is not a power of two, it can't be encoded.
+        if !d.is_power_of_two() {
+            return None;
+        }
+
+        if ((b.wrapping_sub(a)) & !mask) != 0 {
+            // If the bit stretch (b - a) does not fit within the mask derived from the
+            // repeat period, then fail.
+            return None;
+        }
+
+        // The only possible option is b - a repeated every d bits. Now we're going to
+        // actually construct the valid logical immediate derived from that
+        // specification, and see if it equals our original input.
+        //
+        // To repeat a value every d bits, we multiply it by a number of the form
+        // (1 + 2^d + 2^(2d) + ...), i.e. 0x0001000100010001 or similar. These can
+        // be derived using a table lookup on CLZ(d).
+        const MULTIPLIERS: [u64; 6] = [
+            0x0000000000000001,
+            0x0000000100000001,
+            0x0001000100010001,
+            0x0101010101010101,
+            0x1111111111111111,
+            0x5555555555555555,
+        ];
+        let multiplier = MULTIPLIERS[(u64::from(d).leading_zeros() - 57) as usize];
+        let candidate = b.wrapping_sub(a) * multiplier;
+
+        if value != candidate {
+            // The candidate pattern doesn't match our input value, so fail.
+            return None;
+        }
+
+        // We have a match! This is a valid logical immediate, so now we have to
+        // construct the bits and pieces of the instruction encoding that generates
+        // it.
+
+        // Count the set bits in our basic stretch. The special case of clz(0) == -1
+        // makes the answer come out right for stretches that reach the very top of
+        // the word (e.g. numbers like 0xffffc00000000000).
+        let clz_b = if b == 0 {
+            u32::max_value() // -1
+        } else {
+            b.leading_zeros()
+        };
+        let s = clz_a.wrapping_sub(clz_b);
+
+        // Decide how many bits to rotate right by, to put the low bit of that basic
+        // stretch in position a.
+        let (s, r) = if inverted {
+            // If we inverted the input right at the start of this function, here's
+            // where we compensate: the number of set bits becomes the number of clear
+            // bits, and the rotation count is based on position b rather than position
+            // a (since b is the location of the 'lowest' 1 bit after inversion).
+            // Need wrapping for when clz_b is max_value() (for when b == 0).
+            (d - s, clz_b.wrapping_add(1) & (d - 1))
+        } else {
+            (s, (clz_a + 1) & (d - 1))
+        };
+
+        // Now we're done, except for having to encode the S output in such a way that
+        // it gives both the number of set bits and the length of the repeated
+        // segment. The s field is encoded like this:
+        //
+        //     imms    size        S
+        //    ssssss    64    UInt(ssssss)
+        //    0sssss    32    UInt(sssss)
+        //    10ssss    16    UInt(ssss)
+        //    110sss     8    UInt(sss)
+        //    1110ss     4    UInt(ss)
+        //    11110s     2    UInt(s)
+        //
+        // So we 'or' (2 * -d) with our computed s to form imms.
+        let s = ((d * 2).wrapping_neg() | (s - 1)) & 0x3f;
+        debug_assert!(u8::try_from(r).is_ok());
+        debug_assert!(u8::try_from(s).is_ok());
+        Some(ImmLogic {
+            value: original_value,
+            N: out_n != 0,
+            R: r as u8,
+            S: s as u8,
+        })
     }
 
     /// Returns bits ready for encoding: (N:1, R:6, S:6)
@@ -192,14 +380,13 @@ impl ImmLogic {
 
     /// Returns the value that this immediate represents.
     pub fn value(&self) -> u64 {
-        unimplemented!()
+        self.value
     }
 
     /// Return an immediate for the bitwise-inverted value.
-    /// TODO: is this always possible? If not, isel for AndNot/OrNot/XorNot
-    /// will have to compensate.
     pub fn invert(&self) -> ImmLogic {
-        unimplemented!()
+        // For every ImmLogical immediate, the inverse can also be encoded.
+        Self::maybe_from_u64(!self.value, I64).unwrap()
     }
 }
 
@@ -332,6 +519,226 @@ impl ShowWithRRU for MoveWideConst {
             format!("#{}", self.bits)
         } else {
             format!("#{}, LSL #{}", self.bits, self.shift * 16)
+        }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn imm_logical_test() {
+        assert_eq!(None, ImmLogic::maybe_from_u64(0, I64));
+        assert_eq!(None, ImmLogic::maybe_from_u64(u64::max_value(), I64));
+
+        assert_eq!(
+            Some(ImmLogic {
+                value: 1,
+                N: true,
+                R: 0,
+                S: 0
+            }),
+            ImmLogic::maybe_from_u64(1, I64)
+        );
+
+        assert_eq!(
+            Some(ImmLogic {
+                value: 2,
+                N: true,
+                R: 63,
+                S: 0
+            }),
+            ImmLogic::maybe_from_u64(2, I64)
+        );
+
+        assert_eq!(None, ImmLogic::maybe_from_u64(5, I64));
+
+        assert_eq!(None, ImmLogic::maybe_from_u64(11, I64));
+
+        assert_eq!(
+            Some(ImmLogic {
+                value: 248,
+                N: true,
+                R: 61,
+                S: 4
+            }),
+            ImmLogic::maybe_from_u64(248, I64)
+        );
+
+        assert_eq!(None, ImmLogic::maybe_from_u64(249, I64));
+
+        assert_eq!(
+            Some(ImmLogic {
+                value: 1920,
+                N: true,
+                R: 57,
+                S: 3
+            }),
+            ImmLogic::maybe_from_u64(1920, I64)
+        );
+
+        assert_eq!(
+            Some(ImmLogic {
+                value: 0x7ffe,
+                N: true,
+                R: 63,
+                S: 13
+            }),
+            ImmLogic::maybe_from_u64(0x7ffe, I64)
+        );
+
+        assert_eq!(
+            Some(ImmLogic {
+                value: 0x30000,
+                N: true,
+                R: 48,
+                S: 1
+            }),
+            ImmLogic::maybe_from_u64(0x30000, I64)
+        );
+
+        assert_eq!(
+            Some(ImmLogic {
+                value: 0x100000,
+                N: true,
+                R: 44,
+                S: 0
+            }),
+            ImmLogic::maybe_from_u64(0x100000, I64)
+        );
+
+        assert_eq!(
+            Some(ImmLogic {
+                value: u64::max_value() - 1,
+                N: true,
+                R: 63,
+                S: 62
+            }),
+            ImmLogic::maybe_from_u64(u64::max_value() - 1, I64)
+        );
+
+        assert_eq!(
+            Some(ImmLogic {
+                value: 0xaaaaaaaaaaaaaaaa,
+                N: false,
+                R: 1,
+                S: 60
+            }),
+            ImmLogic::maybe_from_u64(0xaaaaaaaaaaaaaaaa, I64)
+        );
+
+        assert_eq!(
+            Some(ImmLogic {
+                value: 0x8181818181818181,
+                N: false,
+                R: 1,
+                S: 49
+            }),
+            ImmLogic::maybe_from_u64(0x8181818181818181, I64)
+        );
+
+        assert_eq!(
+            Some(ImmLogic {
+                value: 0xffc3ffc3ffc3ffc3,
+                N: false,
+                R: 10,
+                S: 43
+            }),
+            ImmLogic::maybe_from_u64(0xffc3ffc3ffc3ffc3, I64)
+        );
+
+        assert_eq!(
+            Some(ImmLogic {
+                value: 0x100000001,
+                N: false,
+                R: 0,
+                S: 0
+            }),
+            ImmLogic::maybe_from_u64(0x100000001, I64)
+        );
+
+        assert_eq!(
+            Some(ImmLogic {
+                value: 0x1111111111111111,
+                N: false,
+                R: 0,
+                S: 56
+            }),
+            ImmLogic::maybe_from_u64(0x1111111111111111, I64)
+        );
+
+        for n in 0..2 {
+            let types = if n == 0 { vec![I64, I32] } else { vec![I64] };
+            for s in 0..64 {
+                for r in 0..64 {
+                    let imm = get_logical_imm(n, s, r);
+                    for &ty in &types {
+                        match ImmLogic::maybe_from_u64(imm, ty) {
+                            Some(ImmLogic { value, .. }) => {
+                                assert_eq!(imm, value);
+                                ImmLogic::maybe_from_u64(!value, ty).unwrap();
+                            }
+                            None => assert_eq!(0, imm),
+                        };
+                    }
+                }
+            }
+        }
+    }
+
+    // Repeat a value that has `width` bits, across a 64-bit value.
+    fn repeat(value: u64, width: u64) -> u64 {
+        let mut result = value & ((1 << width) - 1);
+        let mut i = width;
+        while i < 64 {
+            result |= result << i;
+            i *= 2;
+        }
+        result
+    }
+
+    // Get the logical immediate, from the encoding N/R/S bits.
+    fn get_logical_imm(n: u32, s: u32, r: u32) -> u64 {
+        // An integer is constructed from the n, imm_s and imm_r bits according to
+        // the following table:
+        //
+        //  N   imms    immr    size        S             R
+        //  1  ssssss  rrrrrr    64    UInt(ssssss)  UInt(rrrrrr)
+        //  0  0sssss  xrrrrr    32    UInt(sssss)   UInt(rrrrr)
+        //  0  10ssss  xxrrrr    16    UInt(ssss)    UInt(rrrr)
+        //  0  110sss  xxxrrr     8    UInt(sss)     UInt(rrr)
+        //  0  1110ss  xxxxrr     4    UInt(ss)      UInt(rr)
+        //  0  11110s  xxxxxr     2    UInt(s)       UInt(r)
+        // (s bits must not be all set)
+        //
+        // A pattern is constructed of size bits, where the least significant S+1
+        // bits are set. The pattern is rotated right by R, and repeated across a
+        // 64-bit value.
+
+        if n == 1 {
+            if s == 0x3f {
+                return 0;
+            }
+            let bits = (1u64 << (s + 1)) - 1;
+            bits.rotate_right(r)
+        } else {
+            if (s >> 1) == 0x1f {
+                return 0;
+            }
+            let mut width = 0x20;
+            while width >= 0x2 {
+                if (s & width) == 0 {
+                    let mask = width - 1;
+                    if (s & mask) == mask {
+                        return 0;
+                    }
+                    let bits = (1u64 << ((s & mask) + 1)) - 1;
+                    return repeat(bits.rotate_right(r & mask), width.into());
+                }
+                width >>= 1;
+            }
+            unreachable!();
         }
     }
 }

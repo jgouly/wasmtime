@@ -445,7 +445,7 @@ impl Inst {
         } else if let Some(imm) = MoveWideConst::maybe_from_u64(!value) {
             // 16-bit immediate (shifted by 0, 16, 32 or 48 bits) in MOVN
             smallvec![Inst::MovN { rd, imm }]
-        } else if let Some(imml) = ImmLogic::maybe_from_u64(value) {
+        } else if let Some(imml) = ImmLogic::maybe_from_u64(value, I64) {
             // Weird logical-instruction immediate in ORI using zero register
             smallvec![Inst::AluRRImmLogic {
                 alu_op: ALUOp::Orr64,
