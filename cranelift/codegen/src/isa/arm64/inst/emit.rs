@@ -1312,7 +1312,7 @@ mod test {
         //
         //      $ echo "mov x1, x2" | arm64inst.sh
         insns.push((Inst::Ret {}, "C0035FD6", "ret"));
-        insns.push((Inst::Nop {}, "", ""));
+        insns.push((Inst::Nop {}, "", "nop-zero-len"));
         insns.push((Inst::Nop4 {}, "1F2003D5", "nop"));
         insns.push((
             Inst::AluRRR {
