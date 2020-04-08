@@ -157,6 +157,9 @@ pub trait MachInst: Clone + Debug {
     /// (ret/uncond/cond) and target if applicable.
     fn is_term<'a>(&'a self) -> MachTerminator<'a>;
 
+    /// Returns true if the instruction is an epilogue placeholder.
+    fn is_epilogue_placeholder(&self) -> bool;
+
     /// Generate a move.
     fn gen_move(to_reg: Writable<Reg>, from_reg: Reg, ty: Type) -> Self;
 

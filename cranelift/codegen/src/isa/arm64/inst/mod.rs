@@ -1658,6 +1658,14 @@ impl MachInst for Inst {
         }
     }
 
+    fn is_epilogue_placeholder(&self) -> bool {
+        if let Inst::EpiloguePlaceholder {..} = self {
+            true
+        } else {
+            false
+        }
+    }
+
     fn is_term<'a>(&'a self) -> MachTerminator<'a> {
         match self {
             &Inst::Ret {} | &Inst::EpiloguePlaceholder {} => MachTerminator::Ret,

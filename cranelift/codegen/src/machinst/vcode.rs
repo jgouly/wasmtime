@@ -59,13 +59,13 @@ pub struct VCode<I: VCodeInst> {
     vreg_types: Vec<Type>,
 
     /// Lowered machine instructions in order corresponding to the original IR.
-    insts: Vec<I>,
+    pub insts: Vec<I>,
 
     /// Entry block.
     entry: BlockIndex,
 
     /// Block instruction indices.
-    block_ranges: Vec<(InsnIndex, InsnIndex)>,
+    pub block_ranges: Vec<(InsnIndex, InsnIndex)>,
 
     /// Block successors: index range in the successor-list below.
     block_succ_range: Vec<(usize, usize)>,
