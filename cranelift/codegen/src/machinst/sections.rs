@@ -188,7 +188,7 @@ impl MachSection {
             if next_reloc < self.relocs.len() {
                 let reloc = &self.relocs[next_reloc];
                 if reloc.offset == idx as CodeOffset {
-                    sink.reloc_external(reloc.kind, &reloc.name, reloc.addend);
+                    sink.reloc_external(SourceLoc::default(), reloc.kind, &reloc.name, reloc.addend);
                     next_reloc += 1;
                 }
             }
