@@ -1276,8 +1276,151 @@ fn lower_insn_to_regs<C: LowerCtx<Inst>>(ctx: &mut C, insn: IRInst) {
         }
 
         Opcode::Popcnt => {
-            // TODO
-            unimplemented!()
+            // Lower popcount using the following algorithm:
+            //
+            //   x -= (x >> 1) & 0x5555555555555555
+            //   x = (x & 0x3333333333333333) + ((x >> 2) & 0x3333333333333333)
+            //   x = (x + (x >> 4)) & 0x0f0f0f0f0f0f0f0f
+            //   x += x << 8
+            //   x += x << 16
+            //   x += x << 32
+            //   x >> 56
+            let ty = ty.unwrap();
+            let rd = output_to_reg(ctx, outputs[0]);
+            let rn = input_to_reg(ctx, inputs[0], NarrowValueMode::None);
+            let tmp_constant = ctx.tmp(RegClass::I64, I64);
+            let tmp = ctx.tmp(RegClass::I64, I64);
+            lower_constant_u64(ctx, tmp_constant, 0x5555555555555555);
+
+            // If this is a 32-bit Popcnt, use Lsr32 to clear the top 32 bits of the register, then
+            // the rest of the code is identical to the 64-bit version.
+            // lsr [wx]d, [wx]n, #1
+            ctx.emit(Inst::AluRRImmShift {
+                alu_op: choose_32_64(ty, ALUOp::Lsr32, ALUOp::Lsr64),
+                rd: rd,
+                rn: rn,
+                immshift: ImmShift::maybe_from_u64(1).unwrap(),
+            });
+
+            // TODO: Use logical immediate here when it is available.
+            // and xd, xd, #0x5555555555555555
+            ctx.emit(Inst::AluRRR {
+                alu_op: ALUOp::And64,
+                rd: rd,
+                rn: rd.to_reg(),
+                rm: tmp_constant.to_reg(),
+            });
+
+            // sub xd, xn, xd
+            ctx.emit(Inst::AluRRR {
+                alu_op: ALUOp::Sub64,
+                rd: rd,
+                rn: rn,
+                rm: rd.to_reg(),
+            });
+
+            lower_constant_u64(ctx, tmp_constant, 0x3333333333333333);
+
+            // TODO: Use logical immediate here when it is available.
+            // and xt, xd, #0x3333333333333333
+            ctx.emit(Inst::AluRRR {
+                alu_op: ALUOp::And64,
+                rd: tmp,
+                rn: rd.to_reg(),
+                rm: tmp_constant.to_reg(),
+            });
+
+            // lsr xd, xd, #2
+            ctx.emit(Inst::AluRRImmShift {
+                alu_op: ALUOp::Lsr64,
+                rd: rd,
+                rn: rd.to_reg(),
+                immshift: ImmShift::maybe_from_u64(2).unwrap(),
+            });
+
+            // TODO: Use logical immediate here when it is available.
+            // and xd, xd, #0x3333333333333333
+            ctx.emit(Inst::AluRRR {
+                alu_op: ALUOp::And64,
+                rd: rd,
+                rn: rd.to_reg(),
+                rm: tmp_constant.to_reg(),
+            });
+
+            // add xt, xd, xt
+            ctx.emit(Inst::AluRRR {
+                alu_op: ALUOp::Add64,
+                rd: tmp,
+                rn: rd.to_reg(),
+                rm: tmp.to_reg(),
+            });
+
+            // add xt, xt, xt LSR #4
+            ctx.emit(Inst::AluRRRShift {
+                alu_op: ALUOp::Add64,
+                rd: tmp,
+                rn: tmp.to_reg(),
+                rm: tmp.to_reg(),
+                shiftop: ShiftOpAndAmt::new(
+                    ShiftOp::LSR,
+                    ShiftOpShiftImm::maybe_from_shift(4).unwrap(),
+                    ),
+            });
+
+            lower_constant_u64(ctx, tmp_constant, 0x0f0f0f0f0f0f0f0f);
+
+            // TODO: Use logical immediate here when it is available.
+            // and xt, xt, #0x0f0f0f0f0f0f0f0f
+            ctx.emit(Inst::AluRRR {
+                alu_op: ALUOp::And64,
+                rd: tmp,
+                rn: tmp.to_reg(),
+                rm: tmp_constant.to_reg(),
+            });
+
+            // add xt, xt, xt, LSL #8
+            ctx.emit(Inst::AluRRRShift {
+                alu_op: ALUOp::Add64,
+                rd: tmp,
+                rn: tmp.to_reg(),
+                rm: tmp.to_reg(),
+                shiftop: ShiftOpAndAmt::new(
+                    ShiftOp::LSL,
+                    ShiftOpShiftImm::maybe_from_shift(8).unwrap(),
+                    ),
+            });
+
+            // add xt, xt, xt, LSL #16
+            ctx.emit(Inst::AluRRRShift {
+                alu_op: ALUOp::Add64,
+                rd: tmp,
+                rn: tmp.to_reg(),
+                rm: tmp.to_reg(),
+                shiftop: ShiftOpAndAmt::new(
+                    ShiftOp::LSL,
+                    ShiftOpShiftImm::maybe_from_shift(16).unwrap(),
+                    ),
+            });
+
+            // add xt, xt, xt, LSL #32
+            ctx.emit(Inst::AluRRRShift {
+                alu_op: ALUOp::Add64,
+                rd: tmp,
+                rn: tmp.to_reg(),
+                rm: tmp.to_reg(),
+                shiftop: ShiftOpAndAmt::new(
+                    ShiftOp::LSL,
+                    ShiftOpShiftImm::maybe_from_shift(32).unwrap(),
+                    ),
+            });
+
+            // lsr xd, xt, #56
+            ctx.emit(Inst::AluRRImmShift {
+                alu_op: ALUOp::Lsr64,
+                rd: rd,
+                rn: tmp.to_reg(),
+                immshift: ImmShift::maybe_from_u64(56).unwrap(),
+            });
         }
 
         Opcode::Load

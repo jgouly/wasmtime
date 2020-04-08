@@ -105,3 +105,77 @@ block0(v0: i64):
 ; nextln: mov sp, fp
 ; nextln: ldp fp, lr, [sp], #16
 ; nextln: ret
+
+function %d(i64) -> i64 {
+block0(v0: i64):
+    v1 = popcnt v0
+    return v1
+}
+
+; check: stp fp, lr, [sp, #-16]!
+; nextln: mov fp, sp
+; nextln: movz x1, #21845
+; nextln: movk x1, #21845, LSL #16
+; nextln: movk x1, #21845, LSL #32
+; nextln: movk x1, #21845, LSL #48
+; nextln: lsr x2, x0, #1
+; nextln: and x1, x2, x1
+; nextln: sub x0, x0, x1
+; nextln: movz x1, #13107
+; nextln: movk x1, #13107, LSL #16
+; nextln: movk x1, #13107, LSL #32
+; nextln: movk x1, #13107, LSL #48
+; nextln: and x2, x0, x1
+; nextln: lsr x0, x0, #2
+; nextln: and x0, x0, x1
+; nextln: add x0, x0, x2
+; nextln: add x0, x0, x0, LSR 4
+; nextln: movz x1, #3855
+; nextln: movk x1, #3855, LSL #16
+; nextln: movk x1, #3855, LSL #32
+; nextln: movk x1, #3855, LSL #48
+; nextln: and x0, x0, x1
+; nextln: add x0, x0, x0, LSL 8
+; nextln: add x0, x0, x0, LSL 16
+; nextln: add x0, x0, x0, LSL 32
+; nextln: lsr x0, x0, #56
+; nextln: mov sp, fp
+; nextln: ldp fp, lr, [sp], #16
+; nextln: ret
+
+function %d(i32) -> i32 {
+block0(v0: i32):
+    v1 = popcnt v0
+    return v1
+}
+
+; check: stp fp, lr, [sp, #-16]!
+; nextln: mov fp, sp
+; nextln: movz x1, #21845
+; nextln: movk x1, #21845, LSL #16
+; nextln: movk x1, #21845, LSL #32
+; nextln: movk x1, #21845, LSL #48
+; nextln: lsr w2, w0, #1
+; nextln: and x1, x2, x1
+; nextln: sub x0, x0, x1
+; nextln: movz x1, #13107
+; nextln: movk x1, #13107, LSL #16
+; nextln: movk x1, #13107, LSL #32
+; nextln: movk x1, #13107, LSL #48
+; nextln: and x2, x0, x1
+; nextln: lsr x0, x0, #2
+; nextln: and x0, x0, x1
+; nextln: add x0, x0, x2
+; nextln: add x0, x0, x0, LSR 4
+; nextln: movz x1, #3855
+; nextln: movk x1, #3855, LSL #16
+; nextln: movk x1, #3855, LSL #32
+; nextln: movk x1, #3855, LSL #48
+; nextln: and x0, x0, x1
+; nextln: add x0, x0, x0, LSL 8
+; nextln: add x0, x0, x0, LSL 16
+; nextln: add x0, x0, x0, LSL 32
+; nextln: lsr x0, x0, #56
+; nextln: mov sp, fp
+; nextln: ldp fp, lr, [sp], #16
+; nextln: ret
