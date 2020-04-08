@@ -114,18 +114,15 @@ block0(v0: i64):
 
 ; check: stp fp, lr, [sp, #-16]!
 ; nextln: mov fp, sp
-; nextln: orr x1, xzr, #6148914691236517205
-; nextln: lsr x2, x0, #1
-; nextln: and x1, x2, x1
+; nextln: lsr x1, x0, #1
+; nextln: and x1, x1, #6148914691236517205
 ; nextln: sub x1, x0, x1
-; nextln: orr x2, xzr, #3689348814741910323
-; nextln: and x0, x1, x2
+; nextln: and x0, x1, #3689348814741910323
 ; nextln: lsr x1, x1, #2
-; nextln: and x1, x1, x2
+; nextln: and x1, x1, #3689348814741910323
 ; nextln: add x0, x1, x0
 ; nextln: add x0, x0, x0, LSR 4
-; nextln: orr x1, xzr, #1085102592571150095
-; nextln: and x0, x0, x1
+; nextln: and x0, x0, #1085102592571150095
 ; nextln: add x0, x0, x0, LSL 8
 ; nextln: add x0, x0, x0, LSL 16
 ; nextln: add x0, x0, x0, LSL 32
@@ -142,18 +139,15 @@ block0(v0: i32):
 
 ; check: stp fp, lr, [sp, #-16]!
 ; nextln: mov fp, sp
-; nextln: orr x1, xzr, #6148914691236517205
-; nextln: lsr w2, w0, #1
-; nextln: and x1, x2, x1
+; nextln: lsr w1, w0, #1
+; nextln: and x1, x1, #6148914691236517205
 ; nextln: sub x1, x0, x1
-; nextln: orr x2, xzr, #3689348814741910323
-; nextln: and x0, x1, x2
+; nextln: and x0, x1, #3689348814741910323
 ; nextln: lsr x1, x1, #2
-; nextln: and x1, x1, x2
+; nextln: and x1, x1, #3689348814741910323
 ; nextln: add x0, x1, x0
 ; nextln: add x0, x0, x0, LSR 4
-; nextln: orr x1, xzr, #1085102592571150095
-; nextln: and x0, x0, x1
+; nextln: and x0, x0, #1085102592571150095
 ; nextln: add x0, x0, x0, LSL 8
 ; nextln: add x0, x0, x0, LSL 16
 ; nextln: add x0, x0, x0, LSL 32

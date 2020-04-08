@@ -1288,9 +1288,7 @@ fn lower_insn_to_regs<C: LowerCtx<Inst>>(ctx: &mut C, insn: IRInst) {
             let ty = ty.unwrap();
             let rd = output_to_reg(ctx, outputs[0]);
             let rn = input_to_reg(ctx, inputs[0], NarrowValueMode::None);
-            let tmp_constant = ctx.tmp(RegClass::I64, I64);
             let tmp = ctx.tmp(RegClass::I64, I64);
-            lower_constant_u64(ctx, tmp_constant, 0x5555555555555555);
 
             // If this is a 32-bit Popcnt, use Lsr32 to clear the top 32 bits of the register, then
             // the rest of the code is identical to the 64-bit version.
@@ -1302,13 +1300,12 @@ fn lower_insn_to_regs<C: LowerCtx<Inst>>(ctx: &mut C, insn: IRInst) {
                 immshift: ImmShift::maybe_from_u64(1).unwrap(),
             });
 
-            // TODO: Use logical immediate here when it is available.
             // and xd, xd, #0x5555555555555555
-            ctx.emit(Inst::AluRRR {
+            ctx.emit(Inst::AluRRImmLogic {
                 alu_op: ALUOp::And64,
                 rd: rd,
                 rn: rd.to_reg(),
-                rm: tmp_constant.to_reg(),
+                imml: ImmLogic::maybe_from_u64(0x5555555555555555, I64).unwrap(),
             });
 
             // sub xd, xn, xd
@@ -1319,15 +1316,12 @@ fn lower_insn_to_regs<C: LowerCtx<Inst>>(ctx: &mut C, insn: IRInst) {
                 rm: rd.to_reg(),
             });
 
-            lower_constant_u64(ctx, tmp_constant, 0x3333333333333333);
-
-            // TODO: Use logical immediate here when it is available.
             // and xt, xd, #0x3333333333333333
-            ctx.emit(Inst::AluRRR {
+            ctx.emit(Inst::AluRRImmLogic {
                 alu_op: ALUOp::And64,
                 rd: tmp,
                 rn: rd.to_reg(),
-                rm: tmp_constant.to_reg(),
+                imml: ImmLogic::maybe_from_u64(0x3333333333333333, I64).unwrap(),
             });
 
             // lsr xd, xd, #2
@@ -1338,13 +1332,12 @@ fn lower_insn_to_regs<C: LowerCtx<Inst>>(ctx: &mut C, insn: IRInst) {
                 immshift: ImmShift::maybe_from_u64(2).unwrap(),
             });
 
-            // TODO: Use logical immediate here when it is available.
             // and xd, xd, #0x3333333333333333
-            ctx.emit(Inst::AluRRR {
+            ctx.emit(Inst::AluRRImmLogic {
                 alu_op: ALUOp::And64,
                 rd: rd,
                 rn: rd.to_reg(),
-                rm: tmp_constant.to_reg(),
+                imml: ImmLogic::maybe_from_u64(0x3333333333333333, I64).unwrap(),
             });
 
             // add xt, xd, xt
@@ -1367,15 +1360,12 @@ fn lower_insn_to_regs<C: LowerCtx<Inst>>(ctx: &mut C, insn: IRInst) {
                 ),
             });
 
-            lower_constant_u64(ctx, tmp_constant, 0x0f0f0f0f0f0f0f0f);
-
-            // TODO: Use logical immediate here when it is available.
             // and xt, xt, #0x0f0f0f0f0f0f0f0f
-            ctx.emit(Inst::AluRRR {
+            ctx.emit(Inst::AluRRImmLogic {
                 alu_op: ALUOp::And64,
                 rd: tmp,
                 rn: tmp.to_reg(),
-                rm: tmp_constant.to_reg(),
+                imml: ImmLogic::maybe_from_u64(0x0f0f0f0f0f0f0f0f, I64).unwrap(),
             });
 
             // add xt, xt, xt, LSL #8
