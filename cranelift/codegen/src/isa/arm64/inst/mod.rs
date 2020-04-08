@@ -473,8 +473,8 @@ pub enum Inst {
     },
     FpuStore32 {
         rd: Reg,
-        srcloc: Option<SourceLoc>,
         mem: MemArg,
+        srcloc: Option<SourceLoc>,
     },
     FpuLoad64 {
         rd: Writable<Reg>,

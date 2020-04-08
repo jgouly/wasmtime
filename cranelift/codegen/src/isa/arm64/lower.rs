@@ -1454,6 +1454,7 @@ fn lower_insn_to_regs<C: LowerCtx<Inst>>(ctx: &mut C, insn: IRInst) {
                 | Opcode::Sload32Complex => true,
                 _ => false,
             };
+            let is_float = ty_is_float(elem_ty);
 
             let mem = lower_address(ctx, elem_ty, &inputs[..], off);
             let rd = output_to_reg(ctx, outputs[0]);
@@ -1465,15 +1466,19 @@ fn lower_insn_to_regs<C: LowerCtx<Inst>>(ctx: &mut C, insn: IRInst) {
                 None
             };
 
-            ctx.emit(match (ty_bits(elem_ty), sign_extend) {
-                (1, _) => Inst::ULoad8 { rd, mem, srcloc },
-                (8, false) => Inst::ULoad8 { rd, mem, srcloc },
-                (8, true) => Inst::SLoad8 { rd, mem, srcloc },
-                (16, false) => Inst::ULoad16 { rd, mem, srcloc },
-                (16, true) => Inst::SLoad16 { rd, mem, srcloc },
-                (32, false) => Inst::ULoad32 { rd, mem, srcloc },
-                (32, true) => Inst::SLoad32 { rd, mem, srcloc },
-                (64, _) => Inst::ULoad64 { rd, mem, srcloc },
+            ctx.emit(match (ty_bits(elem_ty), sign_extend, is_float) {
+                (1, _, _) => Inst::ULoad8 { rd, mem, srcloc },
+                (8, false, _) => Inst::ULoad8 { rd, mem, srcloc },
+                (8, true, _) => Inst::SLoad8 { rd, mem, srcloc },
+                (16, false, _) => Inst::ULoad16 { rd, mem, srcloc },
+                (16, true, _) => Inst::SLoad16 { rd, mem, srcloc },
+                (32, false, false) => Inst::ULoad32 { rd, mem, srcloc },
+                (32, true, false) => Inst::SLoad32 { rd, mem, srcloc },
+                (32, false, false) => Inst::ULoad32 { rd, mem, srcloc },
+                (32, true, false) => Inst::SLoad32 { rd, mem, srcloc },
+                (32, _, true) => Inst::FpuLoad32 { rd, mem, srcloc },
+                (64, _, false) => Inst::ULoad64 { rd, mem, srcloc },
+                (64, _, true) => Inst::FpuLoad64 { rd, mem, srcloc },
                 _ => panic!("Unsupported size in load"),
             });
         }
@@ -1494,6 +1499,7 @@ fn lower_insn_to_regs<C: LowerCtx<Inst>>(ctx: &mut C, insn: IRInst) {
                 Opcode::Store | Opcode::StoreComplex => ctx.input_ty(insn, 0),
                 _ => unreachable!(),
             };
+            let is_float = ty_is_float(elem_ty);
 
             let mem = lower_address(ctx, elem_ty, &inputs[1..], off);
             let rd = input_to_reg(ctx, inputs[0], NarrowValueMode::None);
@@ -1505,11 +1511,13 @@ fn lower_insn_to_regs<C: LowerCtx<Inst>>(ctx: &mut C, insn: IRInst) {
                 None
             };
 
-            ctx.emit(match ty_bits(elem_ty) {
-                1 | 8 => Inst::Store8 { rd, mem, srcloc },
-                16 => Inst::Store16 { rd, mem, srcloc },
-                32 => Inst::Store32 { rd, mem, srcloc },
-                64 => Inst::Store64 { rd, mem, srcloc },
+            ctx.emit(match (ty_bits(elem_ty), is_float) {
+                (1, _) | (8, _) => Inst::Store8 { rd, mem, srcloc },
+                (16, _) => Inst::Store16 { rd, mem, srcloc },
+                (32, false) => Inst::Store32 { rd, mem, srcloc },
+                (32, true) => Inst::FpuStore32 { rd, mem, srcloc },
+                (64, false) => Inst::Store64 { rd, mem, srcloc },
+                (64, true) => Inst::FpuStore64 { rd, mem, srcloc },
                 _ => panic!("Unsupported size in store"),
             });
         }
