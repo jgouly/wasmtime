@@ -2186,7 +2186,66 @@ mod test {
             "lsl x8, x9, #63",
         ));
 
-        // TODO: ImmLogic forms (once logic-immediate encoding/decoding exists).
+        insns.push((
+            Inst::AluRRImmLogic {
+                alu_op: ALUOp::And32,
+                rd: writable_xreg(21),
+                rn: xreg(27),
+                imml: ImmLogic::maybe_from_u64(0x80003fff, I32).unwrap(),
+            },
+            "753B0112",
+            "and w21, w27, #2147500031",
+        ));
+        insns.push((
+            Inst::AluRRImmLogic {
+                alu_op: ALUOp::And64,
+                rd: writable_xreg(7),
+                rn: xreg(6),
+                imml: ImmLogic::maybe_from_u64(0x3fff80003fff800, I64).unwrap(),
+            },
+            "C7381592",
+            "and x7, x6, #288221580125796352",
+        ));
+        insns.push((
+            Inst::AluRRImmLogic {
+                alu_op: ALUOp::Orr32,
+                rd: writable_xreg(1),
+                rn: xreg(5),
+                imml: ImmLogic::maybe_from_u64(0x100000, I32).unwrap(),
+            },
+            "A1000C32",
+            "orr w1, w5, #1048576",
+        ));
+        insns.push((
+            Inst::AluRRImmLogic {
+                alu_op: ALUOp::Orr64,
+                rd: writable_xreg(4),
+                rn: xreg(5),
+                imml: ImmLogic::maybe_from_u64(0x8181818181818181, I64).unwrap(),
+            },
+            "A4C401B2",
+            "orr x4, x5, #9331882296111890817",
+        ));
+        insns.push((
+            Inst::AluRRImmLogic {
+                alu_op: ALUOp::Eor32,
+                rd: writable_xreg(1),
+                rn: xreg(5),
+                imml: ImmLogic::maybe_from_u64(0x00007fff, I32).unwrap(),
+            },
+            "A1380052",
+            "eor w1, w5, #32767",
+        ));
+        insns.push((
+            Inst::AluRRImmLogic {
+                alu_op: ALUOp::Eor64,
+                rd: writable_xreg(10),
+                rn: xreg(8),
+                imml: ImmLogic::maybe_from_u64(0x8181818181818181, I64).unwrap(),
+            },
+            "0AC501D2",
+            "eor x10, x8, #9331882296111890817",
+        ));
 
         insns.push((
             Inst::BitRR {
