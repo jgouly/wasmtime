@@ -472,7 +472,9 @@ fn input_to_rs_immlogic<C: LowerCtx<Inst>>(
 ) -> ResultRSImmLogic {
     if let InsnInputSource::Output(out) = input_source(ctx, input) {
         if let Some(imm_value) = output_to_const(ctx, out) {
-            if let Some(i) = ImmLogic::maybe_from_u64(imm_value, I64) {
+            let ty = ctx.output_ty(out.insn, out.output);
+            let ty = if ty_bits(ty) < 32 { I32 } else { ty };
+            if let Some(i) = ImmLogic::maybe_from_u64(imm_value, ty) {
                 ctx.merged(out.insn);
                 return ResultRSImmLogic::ImmLogic(i);
             }
