@@ -1474,8 +1474,6 @@ fn lower_insn_to_regs<C: LowerCtx<Inst>>(ctx: &mut C, insn: IRInst) {
                 (16, true, _) => Inst::SLoad16 { rd, mem, srcloc },
                 (32, false, false) => Inst::ULoad32 { rd, mem, srcloc },
                 (32, true, false) => Inst::SLoad32 { rd, mem, srcloc },
-                (32, false, false) => Inst::ULoad32 { rd, mem, srcloc },
-                (32, true, false) => Inst::SLoad32 { rd, mem, srcloc },
                 (32, _, true) => Inst::FpuLoad32 { rd, mem, srcloc },
                 (64, _, false) => Inst::ULoad64 { rd, mem, srcloc },
                 (64, _, true) => Inst::FpuLoad64 { rd, mem, srcloc },
@@ -1522,19 +1520,8 @@ fn lower_insn_to_regs<C: LowerCtx<Inst>>(ctx: &mut C, insn: IRInst) {
             });
         }
 
-        Opcode::StackLoad => {
-            // TODO
-            unimplemented!()
-        }
-
-        Opcode::StackStore => {
-            // TODO
-            unimplemented!()
-        }
-
-        Opcode::StackAddr => {
-            // TODO
-            unimplemented!()
+        Opcode::StackLoad | Opcode::StackStore | Opcode::StackAddr => {
+            panic!("Direct stack memory access not supported; should not be used by Wasm");
         }
 
         Opcode::HeapAddr => {
@@ -2154,8 +2141,118 @@ fn lower_insn_to_regs<C: LowerCtx<Inst>>(ctx: &mut C, insn: IRInst) {
         }
 
         Opcode::FcvtToUintSat | Opcode::FcvtToSintSat => {
-            // TODO: only remaining FP ops!
-            unimplemented!()
+            let in_ty = ctx.input_ty(insn, 0);
+            let in_bits = ty_bits(in_ty);
+            let out_ty = ctx.output_ty(insn, 0);
+            let out_bits = ty_bits(out_ty);
+            let out_signed = op == Opcode::FcvtToSintSat;
+            let rn = input_to_reg(ctx, inputs[0], NarrowValueMode::None);
+            let rd = output_to_reg(ctx, outputs[0]);
+
+            // FIMM Vtmp1, u32::MAX or u64::MAX or i32::MAX or i64::MAX
+            // FMIN Vtmp2, Vin, Vtmp1
+            // FIMM Vtmp1, 0 or 0 or i32::MIN or i64::MIN
+            // FMAX Vtmp2, Vtmp2, Vtmp
+            // FCMP Vin, Vin
+            // FCSEL Vtmp2, Vtmp1, Vtmp2, NE  // on NaN, select 0
+            // convert Rout, Vtmp2
+
+            assert!(in_bits == 32 || in_bits == 64);
+            assert!(out_bits == 32 || out_bits == 64);
+
+            let min: f64 = match (out_bits, out_signed) {
+                (32, true) => std::i32::MIN as f64,
+                (32, false) => 0.0,
+                (64, true) => std::i64::MIN as f64,
+                (64, false) => 0.0,
+                _ => unreachable!(),
+            };
+
+            let max = match (out_bits, out_signed) {
+                (32, true) => std::i32::MAX as f64,
+                (32, false) => std::u32::MAX as f64,
+                (64, true) => std::i64::MAX as f64,
+                (64, false) => std::u64::MAX as f64,
+                _ => unreachable!(),
+            };
+
+            let rtmp1 = ctx.tmp(RegClass::V128, in_ty);
+            let rtmp2 = ctx.tmp(RegClass::V128, in_ty);
+
+            if in_bits == 32 {
+                ctx.emit(Inst::LoadFpuConst32 {
+                    rd: rtmp1,
+                    const_data: max as f32,
+                });
+            } else {
+                ctx.emit(Inst::LoadFpuConst64 {
+                    rd: rtmp1,
+                    const_data: max,
+                });
+            }
+            ctx.emit(Inst::FpuRRR {
+                fpu_op: choose_32_64(in_ty, FPUOp2::Min32, FPUOp2::Min64),
+                rd: rtmp2,
+                rn: rn,
+                rm: rtmp1.to_reg(),
+            });
+            if in_bits == 32 {
+                ctx.emit(Inst::LoadFpuConst32 {
+                    rd: rtmp1,
+                    const_data: min as f32,
+                });
+            } else {
+                ctx.emit(Inst::LoadFpuConst64 {
+                    rd: rtmp1,
+                    const_data: min,
+                });
+            }
+            ctx.emit(Inst::FpuRRR {
+                fpu_op: choose_32_64(in_ty, FPUOp2::Max32, FPUOp2::Max64),
+                rd: rtmp2,
+                rn: rtmp2.to_reg(),
+                rm: rtmp1.to_reg(),
+            });
+            if in_bits == 32 {
+                ctx.emit(Inst::FpuCmp32 {
+                    rn: rn,
+                    rm: rn,
+                });
+                ctx.emit(Inst::FpuCSel32 {
+                    rd: rtmp2,
+                    rn: rtmp1.to_reg(),
+                    rm: rtmp2.to_reg(),
+                    cond: Cond::Ne,
+                });
+            } else {
+                ctx.emit(Inst::FpuCmp64 {
+                    rn: rn,
+                    rm: rn,
+                });
+                ctx.emit(Inst::FpuCSel64 {
+                    rd: rtmp2,
+                    rn: rtmp1.to_reg(),
+                    rm: rtmp2.to_reg(),
+                    cond: Cond::Ne,
+                });
+            }
+
+            let cvt = match (in_bits, out_bits, out_signed) {
+                (32, 32, false) => FpuToIntOp::F32ToU32,
+                (32, 32, true) => FpuToIntOp::F32ToI32,
+                (32, 64, false) => FpuToIntOp::F32ToU64,
+                (32, 64, true) => FpuToIntOp::F32ToI64,
+                (64, 32, false) => FpuToIntOp::F64ToU32,
+                (64, 32, true) => FpuToIntOp::F64ToI32,
+                (64, 64, false) => FpuToIntOp::F64ToU64,
+                (64, 64, true) => FpuToIntOp::F64ToI64,
+                _ => unreachable!(),
+            };
+            ctx.emit(Inst::FpuToInt {
+                op: cvt,
+                rd,
+                rn: rtmp2.to_reg(),
+            });
         }
 
         Opcode::IaddImm
@@ -2255,7 +2352,7 @@ fn ty_is_float(ty: Type) -> bool {
     !ty_is_int(ty)
 }
 
-fn choose_32_64(ty: Type, op32: ALUOp, op64: ALUOp) -> ALUOp {
+fn choose_32_64<T: Copy>(ty: Type, op32: T, op64: T) -> T {
     let bits = ty_bits(ty);
     if bits <= 32 {
         op32
