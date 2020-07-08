@@ -97,70 +97,108 @@ pub(crate) fn lower_insn_to_regs<C: LowerCtx<I = Inst>>(
             // We use the vector instruction set's saturating adds (UQADD /
             // SQADD), which require vector registers.
             let is_signed = op == Opcode::SaddSat;
-            let narrow_mode = if is_signed {
-                NarrowValueMode::SignExtend64
-            } else {
-                NarrowValueMode::ZeroExtend64
-            };
-            let alu_op = if is_signed {
-                VecALUOp::SQAddScalar
-            } else {
-                VecALUOp::UQAddScalar
-            };
-            let va = ctx.alloc_tmp(RegClass::V128, I128);
-            let vb = ctx.alloc_tmp(RegClass::V128, I128);
-            let ra = put_input_in_reg(ctx, inputs[0], narrow_mode);
-            let rb = put_input_in_reg(ctx, inputs[1], narrow_mode);
+            let ty = ty.unwrap();
             let rd = get_output_reg(ctx, outputs[0]);
-            ctx.emit(Inst::MovToVec64 { rd: va, rn: ra });
-            ctx.emit(Inst::MovToVec64 { rd: vb, rn: rb });
-            ctx.emit(Inst::VecRRR {
-                rd: va,
-                rn: va.to_reg(),
-                rm: vb.to_reg(),
-                alu_op,
-                ty: I64,
-            });
-            ctx.emit(Inst::MovFromVec {
-                rd,
-                rn: va.to_reg(),
-                idx: 0,
-                ty: I64,
-            });
+            if ty_bits(ty) < 128 {
+                let narrow_mode = if is_signed {
+                    NarrowValueMode::SignExtend64
+                } else {
+                    NarrowValueMode::ZeroExtend64
+                };
+                let alu_op = if is_signed {
+                    VecALUOp::SQAddScalar
+                } else {
+                    VecALUOp::UQAddScalar
+                };
+                let va = ctx.alloc_tmp(RegClass::V128, I128);
+                let vb = ctx.alloc_tmp(RegClass::V128, I128);
+                let ra = put_input_in_reg(ctx, inputs[0], narrow_mode);
+                let rb = put_input_in_reg(ctx, inputs[1], narrow_mode);
+                ctx.emit(Inst::MovToVec64 { rd: va, rn: ra });
+                ctx.emit(Inst::MovToVec64 { rd: vb, rn: rb });
+                ctx.emit(Inst::VecRRR {
+                    rd: va,
+                    rn: va.to_reg(),
+                    rm: vb.to_reg(),
+                    alu_op,
+                    ty: I64,
+                });
+                ctx.emit(Inst::MovFromVec {
+                    rd,
+                    rn: va.to_reg(),
+                    idx: 0,
+                    ty: I64,
+                });
+            } else {
+                let rn = put_input_in_reg(ctx, inputs[0], NarrowValueMode::None);
+                let rm = put_input_in_reg(ctx, inputs[1], NarrowValueMode::None);
+                let alu_op = if is_signed {
+                    VecALUOp::Sqadd
+                } else {
+                    VecALUOp::Uqadd
+                };
+
+                ctx.emit(Inst::VecRRR {
+                    rd,
+                    rn,
+                    rm,
+                    alu_op,
+                    ty,
+                });
+            }
         }
 
         Opcode::UsubSat | Opcode::SsubSat => {
             let is_signed = op == Opcode::SsubSat;
-            let narrow_mode = if is_signed {
-                NarrowValueMode::SignExtend64
-            } else {
-                NarrowValueMode::ZeroExtend64
-            };
-            let alu_op = if is_signed {
-                VecALUOp::SQSubScalar
-            } else {
-                VecALUOp::UQSubScalar
-            };
-            let va = ctx.alloc_tmp(RegClass::V128, I128);
-            let vb = ctx.alloc_tmp(RegClass::V128, I128);
-            let ra = put_input_in_reg(ctx, inputs[0], narrow_mode);
-            let rb = put_input_in_reg(ctx, inputs[1], narrow_mode);
+            let ty = ty.unwrap();
             let rd = get_output_reg(ctx, outputs[0]);
-            ctx.emit(Inst::MovToVec64 { rd: va, rn: ra });
-            ctx.emit(Inst::MovToVec64 { rd: vb, rn: rb });
-            ctx.emit(Inst::VecRRR {
-                rd: va,
-                rn: va.to_reg(),
-                rm: vb.to_reg(),
-                alu_op,
-                ty: I64,
-            });
-            ctx.emit(Inst::MovFromVec {
-                rd,
-                rn: va.to_reg(),
-                idx: 0,
-                ty: I64,
-            });
+            if ty_bits(ty) < 128 {
+                let narrow_mode = if is_signed {
+                    NarrowValueMode::SignExtend64
+                } else {
+                    NarrowValueMode::ZeroExtend64
+                };
+                let alu_op = if is_signed {
+                    VecALUOp::SQSubScalar
+                } else {
+                    VecALUOp::UQSubScalar
+                };
+                let va = ctx.alloc_tmp(RegClass::V128, I128);
+                let vb = ctx.alloc_tmp(RegClass::V128, I128);
+                let ra = put_input_in_reg(ctx, inputs[0], narrow_mode);
+                let rb = put_input_in_reg(ctx, inputs[1], narrow_mode);
+                ctx.emit(Inst::MovToVec64 { rd: va, rn: ra });
+                ctx.emit(Inst::MovToVec64 { rd: vb, rn: rb });
+                ctx.emit(Inst::VecRRR {
+                    rd: va,
+                    rn: va.to_reg(),
+                    rm: vb.to_reg(),
+                    alu_op,
+                    ty: I64,
+                });
+                ctx.emit(Inst::MovFromVec {
+                    rd,
+                    rn: va.to_reg(),
+                    idx: 0,
+                    ty: I64,
+                });
+            } else {
+                let rn = put_input_in_reg(ctx, inputs[0], NarrowValueMode::None);
+                let rm = put_input_in_reg(ctx, inputs[1], NarrowValueMode::None);
+                let alu_op = if is_signed {
+                    VecALUOp::Sqsub
+                } else {
+                    VecALUOp::Uqsub
+                };
+
+                ctx.emit(Inst::VecRRR {
+                    rd,
+                    rn,
+                    rm,
+                    alu_op,
+                    ty,
+                });
+            }
         }
 
         Opcode::Ineg => {
